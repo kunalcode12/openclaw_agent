@@ -22,7 +22,6 @@ from research.synthesizer import synthesize_report
 # Default Solana wallet for on-chain analysis (change as needed)
 DEFAULT_ONCHAIN_WALLET = "vines1vzrYbzLMRdu58ou5XTby4qAqVRLmqo36NKPTg"
 
-
 def main() -> None:
     """Run full pipeline and print research report."""
     print("Running AI Trading Research pipeline...\n")

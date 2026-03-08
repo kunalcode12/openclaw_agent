@@ -1,10 +1,3 @@
-"""
-News agent - fetches crypto headlines and classifies overall sentiment.
-
-Uses NewsData.io for headlines and keyword-based sentiment classification.
-Outputs bullish, bearish, or neutral.
-"""
-
 from __future__ import annotations
 
 import re
@@ -12,12 +5,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Add project root to path so imports work when run as script
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from collectors.news import get_crypto_headlines
 
-# Sentiment keywords (case-insensitive)
 BULLISH_KEYWORDS = [
     "surge", "rally", "gain", "gains", "bullish", "soar", "soaring", "jump", "jumped",
     "rise", "rising", "breakout", "break out", "all-time high", "ath", "recovery",
@@ -34,16 +25,6 @@ BEARISH_KEYWORDS = [
 
 
 def _classify_headline_sentiment(title: str, description: str | None) -> str:
-    """
-    Classify a single headline as bullish, bearish, or neutral.
-
-    Args:
-        title: Headline title
-        description: Optional article description
-
-    Returns:
-        "bullish", "bearish", or "neutral"
-    """
     text = f"{title} {description or ''}".lower()
     text = re.sub(r"[^\w\s]", " ", text)
     words = set(text.split())
@@ -63,22 +44,6 @@ def get_news_sentiment(
     query: str = "cryptocurrency",
     api_key: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Fetch crypto headlines and classify overall sentiment.
-
-    Args:
-        limit: Number of headlines to fetch (default 10)
-        query: Search query for news (default "cryptocurrency")
-        api_key: NewsData.io API key (default: NEWSDATA_API_KEY env var)
-
-    Returns:
-        Dict with keys:
-        - sentiment: "bullish", "bearish", or "neutral"
-        - bullish_count: Number of bullish headlines
-        - bearish_count: Number of bearish headlines
-        - neutral_count: Number of neutral headlines
-        - headlines: List of headlines with per-article sentiment
-    """
     headlines = get_crypto_headlines(limit=limit, query=query, api_key=api_key)
 
     classified = []
@@ -99,8 +64,6 @@ def get_news_sentiment(
             bearish_count += 1
         else:
             neutral_count += 1
-
-    # Overall sentiment: majority wins, else neutral
     if bullish_count > bearish_count and bullish_count > neutral_count:
         overall = "bullish"
     elif bearish_count > bullish_count and bearish_count > neutral_count:

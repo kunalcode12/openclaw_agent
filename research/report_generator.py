@@ -1,5 +1,3 @@
-"""LLM-powered research report generation."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,8 +6,6 @@ from typing import Any
 
 @dataclass
 class ResearchReport:
-    """Generated research report with sections."""
-
     summary: str
     market_overview: str
     technical_analysis: str
@@ -20,11 +16,6 @@ class ResearchReport:
 
 
 class ReportGenerator:
-    """
-    Generates a structured research report using an LLM.
-    Aggregates market data, technical analysis, on-chain data, and news.
-    """
-
     def __init__(self, model: str = "gpt-4", api_key: str | None = None) -> None:
         self.model = model
         self.api_key = api_key
@@ -36,18 +27,6 @@ class ReportGenerator:
         on_chain_data: dict[str, Any],
         news_items: list[dict[str, Any]],
     ) -> ResearchReport:
-        """
-        Generate a research report from aggregated data.
-
-        Args:
-            market_data: Current prices, volume, etc.
-            technical_indicators: RSI, MACD, MAs, etc.
-            on_chain_data: Wallet activity, flows, metrics
-            news_items: Aggregated news with sentiment
-
-        Returns:
-            ResearchReport with structured sections
-        """
         prompt = self._build_prompt(
             market_data, technical_indicators, on_chain_data, news_items
         )
@@ -61,7 +40,6 @@ class ReportGenerator:
         on_chain_data: dict[str, Any],
         news_items: list[dict[str, Any]],
     ) -> str:
-        """Build the LLM prompt from aggregated data."""
         return f"""
 Generate a crypto trading research report based on the following data.
 
@@ -87,10 +65,6 @@ Provide a structured report with:
 """
 
     def _call_llm(self, prompt: str) -> str:
-        """
-        Call the LLM API. Override or extend for actual API integration.
-        Falls back to template report when API is unavailable or unconfigured.
-        """
         try:
             from openai import OpenAI
 
@@ -104,7 +78,6 @@ Provide a structured report with:
             return self._fallback_report(prompt)
 
     def _fallback_report(self, _prompt: str) -> str:
-        """Fallback when OpenAI is not available."""
         return """
 # Crypto Trading Research Report
 
@@ -128,7 +101,6 @@ Provide a structured report with:
 """
 
     def _parse_report(self, content: str) -> ResearchReport:
-        """Parse LLM output into structured ResearchReport."""
         sections = {
             "summary": "",
             "market_overview": "",

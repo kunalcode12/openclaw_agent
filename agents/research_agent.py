@@ -1,5 +1,3 @@
-"""Orchestrating agent for the crypto trading research pipeline."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,8 +13,6 @@ from storage.repository import StorageRepository
 
 @dataclass
 class ResearchContext:
-    """Context passed through the research pipeline."""
-
     symbol: str
     market_data: list[dict[str, Any]]
     on_chain_data: dict[str, Any]
@@ -26,14 +22,6 @@ class ResearchContext:
 
 
 class ResearchAgent:
-    """
-    Main agent that orchestrates:
-    - Data collection (market, on-chain, news)
-    - Technical analysis
-    - LLM report generation
-    - Storage of results
-    """
-
     def __init__(
         self,
         storage_path: str = "data",
@@ -48,15 +36,6 @@ class ResearchAgent:
         self.storage = StorageRepository(base_path=storage_path)
 
     def run(self, symbol: str = "BTC") -> ResearchContext:
-        """
-        Execute the full research pipeline for a given symbol.
-
-        Args:
-            symbol: Crypto symbol (e.g. BTC, ETH)
-
-        Returns:
-            ResearchContext with all collected data and generated report
-        """
         market_data = self.market_collector.collect(symbol)
         on_chain_data = self.on_chain_collector.collect(symbol)
         news_items = self.news_collector.collect(symbol)
@@ -99,7 +78,6 @@ class ResearchAgent:
         )
 
     def _market_summary(self, market_data: list[dict[str, Any]]) -> dict[str, Any]:
-        """Extract a compact market summary from OHLCV."""
         if not market_data:
             return {}
         latest = market_data[-1]
@@ -112,7 +90,6 @@ class ResearchAgent:
         }
 
     def _indicators_to_dict(self, ti: TechnicalIndicators) -> dict[str, Any]:
-        """Convert TechnicalIndicators to a serializable dict."""
         return {
             "rsi": ti.rsi,
             "macd": ti.macd,

@@ -1,5 +1,3 @@
-"""Technical analysis module for crypto market data."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,8 +6,6 @@ from typing import Any
 
 @dataclass
 class TechnicalIndicators:
-    """Container for computed technical indicators."""
-
     rsi: float | None = None
     macd: float | None = None
     macd_signal: float | None = None
@@ -23,25 +19,11 @@ class TechnicalIndicators:
 
 
 class TechnicalAnalyzer:
-    """
-    Runs technical analysis on OHLCV market data.
-    Computes indicators like RSI, MACD, moving averages, Bollinger Bands.
-    """
-
     def __init__(self, period_rsi: int = 14, period_ma: int = 20) -> None:
         self.period_rsi = period_rsi
         self.period_ma = period_ma
 
     def analyze(self, ohlcv: list[dict[str, float]]) -> TechnicalIndicators:
-        """
-        Compute technical indicators from OHLCV data.
-
-        Args:
-            ohlcv: List of dicts with keys: open, high, low, close, volume
-
-        Returns:
-            TechnicalIndicators with computed values
-        """
         if not ohlcv:
             return TechnicalIndicators()
 
@@ -68,13 +50,11 @@ class TechnicalAnalyzer:
         )
 
     def _sma(self, data: list[float], period: int) -> float | None:
-        """Simple moving average."""
         if len(data) < period:
             return None
         return sum(data[-period:]) / period
 
     def _compute_rsi(self, closes: list[float]) -> float | None:
-        """Relative Strength Index."""
         if len(closes) < self.period_rsi + 1:
             return None
         gains, losses = [], []
@@ -92,7 +72,6 @@ class TechnicalAnalyzer:
     def _compute_macd(
         self, closes: list[float], fast: int = 12, slow: int = 26, signal: int = 9
     ) -> tuple[float | None, float | None, float | None]:
-        """MACD, signal line, and histogram."""
         if len(closes) < slow:
             return None, None, None
         ema_fast = self._ema(closes, fast)
@@ -106,7 +85,6 @@ class TechnicalAnalyzer:
         return macd_line, signal_line, hist
 
     def _ema(self, data: list[float], period: int) -> float | None:
-        """Exponential moving average (simplified)."""
         if len(data) < period:
             return None
         k = 2 / (period + 1)
@@ -118,7 +96,6 @@ class TechnicalAnalyzer:
     def _bollinger_bands(
         self, closes: list[float], period: int = 20, std_dev: float = 2.0
     ) -> tuple[float | None, float | None]:
-        """Bollinger Bands upper and lower."""
         if len(closes) < period:
             return None, None
         sma = sum(closes[-period:]) / period

@@ -1,17 +1,9 @@
-"""
-Research synthesizer using Google Gemini API.
-
-Combines market data, quant signals, on-chain analysis, and news sentiment
-into a structured crypto trading research report.
-"""
-
 from __future__ import annotations
 
 import json
 import os
 from typing import Any
 
-# Load .env early so GEMINI_API_KEY is available when module is imported
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -20,7 +12,6 @@ except ImportError:
 
 
 def _get_api_key(api_key: str | None) -> str | None:
-    """Resolve API key from parameter or environment."""
     return api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 
 
@@ -33,27 +24,6 @@ def synthesize_report(
     api_key: str | None = None,
     model: str = "gemini-2.5-flash",
 ) -> str:
-    """
-    Generate a crypto research report using Google Gemini.
-
-    Args:
-        market_data: Prices, volume, 24h stats (e.g., from Binance)
-        quant_signals: RSI, EMA trend, signals (e.g., from quant_agent)
-        on_chain_analysis: Whale activity, transfers (e.g., from onchain_agent)
-        news_sentiment: Headlines, sentiment (e.g., from news_agent)
-        polymarket_research: Polymarket opportunities, arbitrage (e.g., from trade_research)
-        api_key: Gemini API key (default: GEMINI_API_KEY or GOOGLE_API_KEY env var)
-        model: Gemini model name (default gemini-2.0-flash)
-
-    Returns:
-        Full research report as text with sections:
-        - Market Overview
-        - Technical Analysis
-        - On-chain Analysis
-        - Sentiment Analysis
-        - Polymarket Opportunities (if provided)
-        - Trade Thesis
-    """
     polymarket_research = polymarket_research or {}
     key = _get_api_key(api_key)
     if not key:
@@ -64,16 +34,13 @@ def synthesize_report(
     prompt = _build_prompt(
         market_data, quant_signals, on_chain_analysis, news_sentiment, polymarket_research
     )
-
-    # Try models in order (free tier: gemini-2.5-flash, gemini-2.0-flash)
     models_to_try = [
         model,
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
         "gemini-2.0-flash",
     ]
-    models_to_try = list(dict.fromkeys(models_to_try))  # dedupe, keep order
-
+    models_to_try = list(dict.fromkeys(models_to_try))
     for m in models_to_try:
         try:
             from google import genai
@@ -104,7 +71,6 @@ def _build_prompt(
     news_sentiment: dict[str, Any],
     polymarket_research: dict[str, Any],
 ) -> str:
-    """Build the Gemini prompt from aggregated inputs."""
     sections = [
         "## Market Data",
         json.dumps(market_data, indent=2),
@@ -169,7 +135,6 @@ def _fallback_report(
     news_sentiment: dict[str, Any],
     polymarket_research: dict[str, Any] | None = None,
 ) -> str:
-    """Template report when Gemini API is unavailable."""
     polymarket_research = polymarket_research or {}
     polymarket_block = ""
     if polymarket_research:
@@ -204,7 +169,6 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()  # Load .env so GEMINI_API_KEY is available
 
-    # Example usage with sample data
     sample_market = {"BTC": "67850", "ETH": "1978", "SOL": "83.70"}
     sample_quant = {"trend": "bullish", "rsi": 62, "signal": "possible breakout"}
     sample_onchain = {"whale_in": 2, "whale_out": 1, "total_whale_in": 500}

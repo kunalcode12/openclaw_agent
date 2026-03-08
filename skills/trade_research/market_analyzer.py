@@ -1,10 +1,3 @@
-"""
-Market analyzer: orchestration, scoring, and ranking.
-
-Fetches markets, runs clustering, opportunity and arbitrage detection,
-and returns ranked results.
-"""
-
 import asyncio
 import logging
 from typing import Any
@@ -20,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 
 def _rank_opportunities(opportunities: list[Opportunity], top_n: int = 10) -> list[dict]:
-    """Rank opportunities by score = liquidity * mispricing * volume (via score_component)."""
     sorted_opps = sorted(
         opportunities,
         key=lambda o: o.score_component,
@@ -44,7 +36,6 @@ def _rank_opportunities(opportunities: list[Opportunity], top_n: int = 10) -> li
 
 
 def _serialize_arbitrage(arbs: list[ArbitrageOpportunity]) -> list[dict]:
-    """Convert arbitrage opportunities to JSON-serializable dicts."""
     return [
         {
             "type": a.arb_type,
@@ -59,7 +50,6 @@ def _serialize_arbitrage(arbs: list[ArbitrageOpportunity]) -> list[dict]:
 
 
 def _serialize_mispriced(mispriced: list[dict]) -> list[dict]:
-    """Ensure mispriced_markets are JSON-serializable."""
     return [
         {
             "market_id": m["market_id"],
@@ -76,23 +66,7 @@ async def run_analysis(
     max_markets: int = 500,
     top_opportunities_n: int = 10,
 ) -> dict[str, Any]:
-    """
-    Run full Polymarket analysis pipeline.
-
-    Args:
-        max_markets: Max markets to fetch from API
-        top_opportunities_n: Number of top opportunities to return
-
-    Returns:
-        {
-            "top_opportunities": [...],
-            "arbitrage": [...],
-            "mispriced_markets": [...]
-        }
-    """
     logger.info("Starting Polymarket analysis...")
-
-    # 1. Fetch markets (async)
     markets = await fetch_all_markets(max_markets=max_markets, closed=False)
     if not markets:
         return {
@@ -100,18 +74,10 @@ async def run_analysis(
             "arbitrage": [],
             "mispriced_markets": [],
         }
-
-    # 2. Cluster (sync; requires sentence-transformers or scikit-learn)
     clusters = cluster_markets(markets, similarity_threshold=0.75, min_cluster_size=2)
-
-    # 3. Detect opportunities and arbitrage
     opportunities, mispriced = detect_opportunities(markets, clusters)
     arbs = detect_arbitrage(markets, clusters)
-
-    # 4. Rank and serialize
     top_opps = _rank_opportunities(opportunities, top_n=top_opportunities_n)
-
-    # Fallback: when clustering skipped or no formal opportunities, show top by activity
     if not top_opps and markets:
         logger.info("No opportunities from clustering—showing top markets by activity.")
         sorted_by_activity = sorted(

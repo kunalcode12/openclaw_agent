@@ -1,10 +1,3 @@
-"""
-Async client for Polymarket Gamma API.
-
-Fetches market data from https://gamma-api.polymarket.com/markets
-and parses into normalized dataclass format.
-"""
-
 import json
 import logging
 from datetime import datetime
@@ -20,8 +13,6 @@ GAMMA_API_BASE = "https://gamma-api.polymarket.com"
 
 @dataclass
 class Polymarket:
-    """Normalized market data from Polymarket Gamma API."""
-
     id: str
     question: str
     yes_price: float
@@ -35,19 +26,13 @@ class Polymarket:
 
     @property
     def total_probability(self) -> float:
-        """YES + NO; should be ~1.0; >1 indicates same-market arbitrage."""
         return self.yes_price + self.no_price
 
 
 def _parse_prices(raw: dict) -> tuple[float, float]:
-    """
-    Parse outcomePrices from API response.
-    Format: outcomePrices is JSON string '["0.60","0.40"]' with index 0=YES, 1=NO.
-    """
     prices_str = raw.get("outcomePrices")
     if not prices_str:
-        return 0.5, 0.5  # fallback
-
+        return 0.5, 0.5
     try:
         if isinstance(prices_str, str):
             prices = json.loads(prices_str)
@@ -62,7 +47,6 @@ def _parse_prices(raw: dict) -> tuple[float, float]:
 
 
 def _parse_float(val, default: float = 0.0) -> float:
-    """Parse string/number to float safely."""
     if val is None:
         return default
     try:
@@ -72,7 +56,6 @@ def _parse_float(val, default: float = 0.0) -> float:
 
 
 def _parse_datetime(val) -> Optional[datetime]:
-    """Parse ISO datetime string."""
     if not val:
         return None
     try:
@@ -84,7 +67,6 @@ def _parse_datetime(val) -> Optional[datetime]:
 
 
 def _parse_market(raw: dict) -> Optional[Polymarket]:
-    """Parse a single raw market object into Polymarket dataclass."""
     try:
         market_id = str(raw.get("id", raw.get("conditionId", "")))
         if not market_id:
@@ -123,20 +105,7 @@ async def fetch_markets(
     closed: bool = False,
     client: Optional[httpx.AsyncClient] = None,
 ) -> list[Polymarket]:
-    """
-    Fetch markets from Polymarket Gamma API.
-
-    Args:
-        limit: Max markets to fetch per request
-        offset: Pagination offset
-        closed: If False, exclude closed markets (default)
-        client: Optional shared httpx client for connection pooling
-
-    Returns:
-        List of parsed Polymarket objects
-    """
     params = {"limit": limit, "offset": offset}
-    # Gamma API: closed=false for active markets (filter client-side if unsupported)
     if not closed:
         params["closed"] = "false"
 
@@ -159,8 +128,6 @@ async def fetch_markets(
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON from Polymarket: {e}")
         return []
-
-    # Handle both list and dict responses (some APIs wrap in {"data": [...]})
     if isinstance(data, dict):
         data = data.get("data", data.get("markets", []))
     if not isinstance(data, list):
@@ -180,16 +147,6 @@ async def fetch_all_markets(
     max_markets: int = 1000,
     closed: bool = False,
 ) -> list[Polymarket]:
-    """
-    Fetch all active markets with pagination.
-
-    Args:
-        max_markets: Maximum total markets to fetch
-        closed: Include closed markets
-
-    Returns:
-        List of all parsed markets
-    """
     all_markets = []
     offset = 0
     batch_size = 200
@@ -211,8 +168,6 @@ async def fetch_all_markets(
             if len(all_markets) >= max_markets:
                 all_markets = all_markets[:max_markets]
                 break
-
-    # Filter closed markets client-side if API ignored closed param
     if not closed:
         all_markets = [m for m in all_markets if not m.closed]
 

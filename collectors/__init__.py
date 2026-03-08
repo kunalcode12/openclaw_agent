@@ -1,5 +1,3 @@
-"""Collectors module - fetches market data, on-chain data, and news."""
-
 from collectors.binance import get_klines, get_price, get_24h_stats
 from collectors.helius import get_token_transfers, get_wallet_transactions
 from collectors.market_data import MarketDataCollector, OHLCV

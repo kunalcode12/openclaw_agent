@@ -1,10 +1,3 @@
-"""
-Opportunity detection: mispricing, volume spikes, and price anomalies.
-
-Flags markets where probability differs from related markets, low liquidity
-with large volume spikes, and sudden price movements (extensible for historical).
-"""
-
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -16,8 +9,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Opportunity:
-    """A detected trading opportunity."""
-
     market_id: str
     question: str
     reason: str
@@ -25,12 +16,11 @@ class Opportunity:
     no_price: float
     liquidity: float
     volume: float
-    mispricing: float  # abs diff from expected
-    score_component: float  # contribution to final score
+    mispricing: float
+    score_component: float
 
 
 def _percentile(values: list[float], p: float) -> float:
-    """Compute percentile; return 0 if empty."""
     if not values:
         return 0.0
     return float(np.percentile(values, p))
@@ -43,24 +33,6 @@ def detect_opportunities(
     liquidity_percentile_low: float = 10.0,
     volume_percentile_high: float = 90.0,
 ) -> tuple[list[Opportunity], list[dict]]:
-    """
-    Detect trading opportunities across markets.
-
-    Signals:
-    1. Mispricing: YES price differs significantly from cluster mean
-    2. Low liquidity + volume spike: unusual activity in thin markets
-    3. Sudden price move: placeholder for historical data (v2)
-
-    Args:
-        markets: List of Polymarket objects
-        clusters: List of Cluster from market_clusterer
-        mispricing_threshold: Min abs diff to flag mispricing (default 0.15)
-        liquidity_percentile_low: Flag if liquidity < this percentile
-        volume_percentile_high: Flag if volume > this percentile
-
-    Returns:
-        (opportunities, mispriced_markets)
-    """
     if not markets:
         return [], []
 
@@ -73,8 +45,6 @@ def detect_opportunities(
 
     opportunities = []
     mispriced_markets = []
-
-    # Build cluster lookup: market_id -> list of other market ids in same cluster
     cluster_members: dict[str, list[str]] = {}
     for cluster in clusters:
         for mid in cluster.market_ids:
@@ -83,8 +53,6 @@ def detect_opportunities(
     for m in markets:
         reasons = []
         mispricing = 0.0
-
-        # 1. Probability vs related markets
         if m.id in cluster_members and cluster_members[m.id]:
             related_ids = cluster_members[m.id]
             related = [market_by_id[rid] for rid in related_ids if rid in market_by_id]
@@ -103,12 +71,8 @@ def detect_opportunities(
                             "mispricing": diff,
                         }
                     )
-
-        # 2. Low liquidity + volume spike
         if m.liquidity > 0 and m.liquidity <= liq_threshold and m.volume >= vol_threshold:
             reasons.append("low_liq_volume_spike")
-
-        # Same-market mispricing (YES+NO != 1)
         total_prob = m.yes_price + m.no_price
         if abs(total_prob - 1.0) > 0.02:
             prob_mispricing = abs(total_prob - 1.0)
@@ -118,9 +82,6 @@ def detect_opportunities(
 
         if not reasons:
             continue
-
-        # Score component: liquidity * mispricing * volume (normalized for ranking)
-        # Use log-scale for liquidity/volume to handle large ranges
         liq_norm = np.log1p(m.liquidity) / max(np.log1p(max(liquidity_values)), 1)
         vol_norm = np.log1p(m.volume) / max(np.log1p(max(volume_values)), 1)
         score_component = liq_norm * max(mispricing, 0.01) * vol_norm

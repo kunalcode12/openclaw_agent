@@ -1,10 +1,3 @@
-"""
-Market clustering via semantic similarity.
-
-Uses sentence-transformers (all-MiniLM-L6-v2) when available, with TF-IDF
-fallback for environments where HuggingFace cache is restricted.
-"""
-
 import logging
 import os
 from dataclasses import dataclass
@@ -13,20 +6,16 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded to avoid startup cost when clustering is skipped
 _model = None
 _use_tfidf_fallback = False
 
 
 def _get_model():
-    """Lazy-load sentence-transformers model, or None to use TF-IDF fallback."""
     global _model, _use_tfidf_fallback
     if _model is not None:
         return _model
     if _use_tfidf_fallback:
         return None
-
-    # Use project-local cache if ~/.cache has permission issues
     project_root = Path(__file__).resolve().parent.parent.parent
     local_cache = project_root / ".cache" / "huggingface"
     local_cache.mkdir(parents=True, exist_ok=True)
@@ -50,8 +39,6 @@ def _get_model():
 
 @dataclass
 class Cluster:
-    """A cluster of semantically related markets."""
-
     market_ids: list[str]
     questions: list[str]
     mean_embedding: Optional[list[float]] = None
@@ -66,7 +53,6 @@ def _cluster_with_tfidf(
     similarity_threshold: float,
     min_cluster_size: int,
 ) -> list[Cluster]:
-    """Fallback clustering using TF-IDF + cosine similarity (no sentence-transformers)."""
     try:
         from sklearn.feature_extraction.text import TfidfVectorizer
         from sklearn.metrics.pairwise import cosine_similarity
@@ -80,8 +66,6 @@ def _cluster_with_tfidf(
     vectorizer = TfidfVectorizer(max_features=5000, stop_words="english", ngram_range=(1, 2))
     tfidf = vectorizer.fit_transform(questions)
     sim_matrix = cosine_similarity(tfidf, tfidf)
-
-    # Union-Find (same as below)
     n = len(questions)
     parent = list(range(n))
 
@@ -111,7 +95,7 @@ def _cluster_with_tfidf(
     for indices in clusters_dict.values():
         if len(indices) < min_cluster_size:
             continue
-        mean_emb = None  # TF-IDF doesn't provide meaningful mean for our use
+        mean_emb = None
         clusters.append(
             Cluster(
                 market_ids=[id_list[i] for i in indices],
@@ -127,20 +111,6 @@ def cluster_markets(
     similarity_threshold: float = 0.75,
     min_cluster_size: int = 2,
 ) -> list[Cluster]:
-    """
-    Cluster markets by semantic similarity of their questions.
-
-    Uses sentence-transformers when available, else TF-IDF fallback.
-    Cosine similarity; markets above threshold are grouped.
-
-    Args:
-        markets: List of Polymarket objects (must have .id and .question)
-        similarity_threshold: Min cosine similarity to consider related (0.75 default)
-        min_cluster_size: Skip clusters smaller than this (default 2)
-
-    Returns:
-        List of Cluster objects (each with market_ids, questions, mean_embedding)
-    """
     if len(markets) < 2:
         return []
 
@@ -149,14 +119,11 @@ def cluster_markets(
     model = _get_model()
 
     if model is None:
-        # TF-IDF fallback (lower threshold; TF-IDF similarity tends to be sparser)
         return _cluster_with_tfidf(
             questions, id_list,
             similarity_threshold=max(0.5, similarity_threshold - 0.15),
             min_cluster_size=min_cluster_size,
         )
-
-    # Batch encode for speed
     logger.info(f"Encoding {len(questions)} market questions...")
     embeddings = model.encode(questions, show_progress_bar=False)
 
@@ -164,8 +131,6 @@ def cluster_markets(
     from sentence_transformers import util
 
     sim_matrix = util.cos_sim(embeddings, embeddings)
-
-    # Union-Find to merge clusters
     parent = list(range(len(markets)))
 
     def find(x: int) -> int:
@@ -182,8 +147,6 @@ def cluster_markets(
         for j in range(i + 1, len(markets)):
             if sim_matrix[i][j].item() >= similarity_threshold:
                 union(i, j)
-
-    # Build clusters from disjoint sets
     clusters_dict: dict[int, list[int]] = {}
     for i in range(len(markets)):
         root = find(i)

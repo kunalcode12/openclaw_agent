@@ -1,5 +1,3 @@
-"""SQLite database for market data, signals, news, and research reports."""
-
 from __future__ import annotations
 
 import json

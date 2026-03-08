@@ -1,5 +1,3 @@
-"""Storage module - persistence for collected data and reports."""
-
 from storage.database import (
     get_last_reports,
     get_market_data,

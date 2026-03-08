@@ -1,10 +1,3 @@
-"""
-Polymarket Trade Research - main entry point.
-
-Runs analysis and prints top opportunities and arbitrage in clean tables.
-Callable from main.py for OpenClaw integration.
-"""
-
 import argparse
 import asyncio
 import json
@@ -12,7 +5,6 @@ import logging
 import sys
 from pathlib import Path
 
-# Ensure project root is on path when run as script
 _project_root = Path(__file__).resolve().parent.parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
@@ -31,21 +23,10 @@ async def run_research(
     max_markets: int = 500,
     top_n: int = 10,
 ) -> dict:
-    """
-    Run Polymarket research and return structured results.
-
-    Returns:
-        {
-            "top_opportunities": [...],
-            "arbitrage": [...],
-            "mispriced_markets": [...]
-        }
-    """
     return await run_analysis(max_markets=max_markets, top_opportunities_n=top_n)
 
 
 def print_results(result: dict) -> None:
-    """Print top 10 opportunities and arbitrage trades in clean tables."""
     try:
         from rich.console import Console
         from rich.table import Table
@@ -55,8 +36,6 @@ def print_results(result: dict) -> None:
         return
 
     console = Console()
-
-    # Top opportunities
     opps = result.get("top_opportunities", [])
     if opps:
         table = Table(title="Top 10 Trading Opportunities", show_header=True)
@@ -81,8 +60,6 @@ def print_results(result: dict) -> None:
         console.print(table)
     else:
         console.print("[yellow]No opportunities detected.[/yellow]")
-
-    # Arbitrage
     arbs = result.get("arbitrage", [])
     if arbs:
         table = Table(title="Arbitrage Opportunities", show_header=True)
@@ -104,7 +81,6 @@ def print_results(result: dict) -> None:
 
 
 def _print_fallback(result: dict) -> None:
-    """Fallback when rich is not installed."""
     opps = result.get("top_opportunities", [])
     arbs = result.get("arbitrage", [])
 
@@ -125,7 +101,6 @@ def _print_fallback(result: dict) -> None:
 
 
 def main() -> None:
-    """CLI entry point."""
     parser = argparse.ArgumentParser(description="Polymarket Trade Research")
     parser.add_argument(
         "--json",

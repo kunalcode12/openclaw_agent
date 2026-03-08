@@ -7,6 +7,7 @@ A modular crypto and prediction-market trading system. Collects market data from
 ## Table of Contents
 
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Architecture](#architecture)
 - [Requirements](#requirements)
 - [Installation](#installation)
@@ -33,6 +34,26 @@ A modular crypto and prediction-market trading system. Collects market data from
 - **On-Chain Whale Tracking** – Solana wallet transfers via Helius
 - **News Sentiment** – Keyword-based classification (bullish/bearish/neutral)
 - **OpenClaw Ready** – Polymarket subcommand for skill/Telegram integration
+
+---
+
+## Screenshots
+
+<p align="center">
+  <img src="assets/IMG_2508.PNG" width="400" alt="Screenshot 1">
+  <img src="assets/IMG_2509.PNG" width="400" alt="Screenshot 2">
+</p>
+<p align="center">
+  <img src="assets/IMG_2510.PNG" width="400" alt="Screenshot 3">
+  <img src="assets/IMG_2511.PNG" width="400" alt="Screenshot 4">
+</p>
+<p align="center">
+  <img src="assets/IMG_2512.PNG" width="400" alt="Screenshot 5">
+  <img src="assets/IMG_2513.PNG" width="400" alt="Screenshot 6">
+</p>
+<p align="center">
+  <img src="assets/IMG_2514.PNG" width="400" alt="Screenshot 7">
+</p>
 
 ---
 

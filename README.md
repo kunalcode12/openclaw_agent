@@ -1,4 +1,4 @@
-# AI Trading Research
+# AI Trading using Openclaw via Telegram 
 
 A modular crypto and prediction-market trading system. Collects market data from Binance, Twitter Scrapper and Polymarket, runs technical and on-chain analysis, aggregates news sentiment, detects arbitrage opportunities, and generates research reports. Integrates with OpenClaw for Telegram and other agents.
 

@@ -16,5 +16,8 @@ build/
 # Project data
 data/
 
+# HuggingFace/sentence-transformers cache (skills/trade_research)
+.cache/
+
 # Environment and secrets
 .env

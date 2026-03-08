@@ -29,6 +29,7 @@ def synthesize_report(
     quant_signals: dict[str, Any],
     on_chain_analysis: dict[str, Any],
     news_sentiment: dict[str, Any],
+    polymarket_research: dict[str, Any] | None = None,
     api_key: str | None = None,
     model: str = "gemini-2.5-flash",
 ) -> str:
@@ -40,6 +41,7 @@ def synthesize_report(
         quant_signals: RSI, EMA trend, signals (e.g., from quant_agent)
         on_chain_analysis: Whale activity, transfers (e.g., from onchain_agent)
         news_sentiment: Headlines, sentiment (e.g., from news_agent)
+        polymarket_research: Polymarket opportunities, arbitrage (e.g., from trade_research)
         api_key: Gemini API key (default: GEMINI_API_KEY or GOOGLE_API_KEY env var)
         model: Gemini model name (default gemini-2.0-flash)
 
@@ -49,13 +51,19 @@ def synthesize_report(
         - Technical Analysis
         - On-chain Analysis
         - Sentiment Analysis
+        - Polymarket Opportunities (if provided)
         - Trade Thesis
     """
+    polymarket_research = polymarket_research or {}
     key = _get_api_key(api_key)
     if not key:
-        return _fallback_report(market_data, quant_signals, on_chain_analysis, news_sentiment)
+        return _fallback_report(
+            market_data, quant_signals, on_chain_analysis, news_sentiment, polymarket_research
+        )
 
-    prompt = _build_prompt(market_data, quant_signals, on_chain_analysis, news_sentiment)
+    prompt = _build_prompt(
+        market_data, quant_signals, on_chain_analysis, news_sentiment, polymarket_research
+    )
 
     # Try models in order (free tier: gemini-2.5-flash, gemini-2.0-flash)
     models_to_try = [
@@ -85,7 +93,7 @@ def synthesize_report(
             continue
 
     return _fallback_report(
-        market_data, quant_signals, on_chain_analysis, news_sentiment
+        market_data, quant_signals, on_chain_analysis, news_sentiment, polymarket_research
     )
 
 
@@ -94,40 +102,63 @@ def _build_prompt(
     quant_signals: dict[str, Any],
     on_chain_analysis: dict[str, Any],
     news_sentiment: dict[str, Any],
+    polymarket_research: dict[str, Any],
 ) -> str:
     """Build the Gemini prompt from aggregated inputs."""
+    sections = [
+        "## Market Data",
+        json.dumps(market_data, indent=2),
+        "## Quant Signals (Technical)",
+        json.dumps(quant_signals, indent=2),
+        "## On-Chain Analysis",
+        json.dumps(on_chain_analysis, indent=2),
+        "## News Sentiment",
+        json.dumps(news_sentiment, indent=2),
+    ]
+    if polymarket_research:
+        sections.extend(
+            [
+                "## Polymarket Research",
+                json.dumps(polymarket_research, indent=2),
+            ]
+        )
+
+    report_sections = [
+        "## Market Overview",
+        "Summarize current market conditions, key price levels, and notable movements.",
+        "## Technical Analysis",
+        "Interpret the quant signals (RSI, EMA trend, etc.) and what they imply for price action.",
+        "## On-Chain Analysis",
+        "Summarize whale activity and on-chain metrics. What do large transfers suggest?",
+        "## Sentiment Analysis",
+        "Summarize news sentiment and how it aligns or conflicts with market/technical signals.",
+    ]
+    if polymarket_research:
+        report_sections.extend(
+            [
+                "## Polymarket Opportunities",
+                "Summarize top opportunities and arbitrage findings from Polymarket. Highlight mispriced markets or cross-market arbitrage if present.",
+            ]
+        )
+    report_sections.extend(
+        [
+            "## Trade Thesis",
+            "Provide a clear, actionable trade thesis: bullish, bearish, or neutral, with key levels and catalysts.",
+        ]
+    )
+
+    data_block = "\n\n".join(sections)
+    instructions = "\n\n".join(report_sections)
+
     return f"""You are a crypto trading research analyst. Generate a concise, actionable research report based on the following data.
 
-## Market Data
-{json.dumps(market_data, indent=2)}
-
-## Quant Signals (Technical)
-{json.dumps(quant_signals, indent=2)}
-
-## On-Chain Analysis
-{json.dumps(on_chain_analysis, indent=2)}
-
-## News Sentiment
-{json.dumps(news_sentiment, indent=2)}
+{data_block}
 
 ---
 
 Write a structured report with exactly these sections. Use clear headers (##) for each section. Be concise and data-driven.
 
-## Market Overview
-Summarize current market conditions, key price levels, and notable movements.
-
-## Technical Analysis
-Interpret the quant signals (RSI, EMA trend, etc.) and what they imply for price action.
-
-## On-Chain Analysis
-Summarize whale activity and on-chain metrics. What do large transfers suggest?
-
-## Sentiment Analysis
-Summarize news sentiment and how it aligns or conflicts with market/technical signals.
-
-## Trade Thesis
-Provide a clear, actionable trade thesis: bullish, bearish, or neutral, with key levels and catalysts.
+{instructions}
 """
 
 
@@ -136,8 +167,16 @@ def _fallback_report(
     quant_signals: dict[str, Any],
     on_chain_analysis: dict[str, Any],
     news_sentiment: dict[str, Any],
+    polymarket_research: dict[str, Any] | None = None,
 ) -> str:
     """Template report when Gemini API is unavailable."""
+    polymarket_research = polymarket_research or {}
+    polymarket_block = ""
+    if polymarket_research:
+        polymarket_block = f"""
+## Polymarket Research
+{json.dumps(polymarket_research, indent=2)}
+"""
     return f"""# Crypto Trading Research Report
 
 *Set GEMINI_API_KEY to generate dynamic reports with Google Gemini.*
@@ -155,7 +194,7 @@ def _fallback_report(
 
 ## Sentiment Analysis
 {json.dumps(news_sentiment, indent=2)}
-
+{polymarket_block}
 ## Trade Thesis
 [Configure GEMINI_API_KEY for AI-generated trade thesis]
 """

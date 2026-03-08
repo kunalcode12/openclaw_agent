@@ -11,3 +11,9 @@ google-genai>=1.0.0
 pandas>=2.0.0
 numpy>=1.24.0
 ta>=0.11.0
+
+# Polymarket trade research (skills/trade_research)
+httpx>=0.27.0
+sentence-transformers>=3.0.0
+scikit-learn>=1.3.0
+rich>=13.0.0

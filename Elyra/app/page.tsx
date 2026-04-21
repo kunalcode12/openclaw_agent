@@ -337,10 +337,21 @@ export default function Home() {
       return;
     }
 
-    await createWallet({
-      walletName: "Elyra Solana Wallet",
-      accounts: ["ADDRESS_FORMAT_SOLANA"],
-    });
+    setStatusMessage("Creating Solana wallet…");
+    try {
+      await createWallet({
+        walletName: "Elyra Solana Wallet",
+        accounts: ["ADDRESS_FORMAT_SOLANA"],
+      });
+      setStatusMessage("Solana wallet created. You can deposit when the address appears.");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : String(error);
+      console.error("Turnkey createWallet failed:", error);
+      setStatusMessage(
+        `Could not create wallet: ${message}. Confirm Turnkey org ID, auth proxy, and that wallet creation is allowed for this user.`,
+      );
+    }
   };
 
   const handleActionSubmit = async (event: React.FormEvent) => {
@@ -478,14 +489,14 @@ export default function Home() {
 
   if (!isReady) {
     return (
-      <div className="min-h-screen bg-black text-white grid place-items-center">
+      <div className="grid h-full min-h-0 flex-1 place-items-center bg-black text-white">
         <p className="text-sm text-white/80">Initializing Turnkey client...</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-black text-white">
       <Navbar
         solPrice={solPrice}
         isAuthenticated={isAuthenticated}
@@ -515,12 +526,12 @@ export default function Home() {
         }}
       />
 
-      <main className="mx-auto grid w-full max-w-[1800px] grid-cols-1 gap-0 xl:grid-cols-10">
-        <section className="overflow-hidden rounded-l-xl border border-white/10 bg-black xl:col-span-7 xl:h-[calc(100vh-96px)]">
+      <main className="mx-auto flex w-full max-w-[1800px] flex-1 min-h-0 flex-col gap-0 overflow-hidden xl:grid xl:grid-cols-10 xl:grid-rows-[minmax(0,1fr)] xl:items-stretch">
+        <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-black max-xl:min-h-[min(360px,55dvh)] xl:col-span-7 xl:h-full xl:max-h-full xl:min-h-0 xl:rounded-l-xl xl:rounded-r-none">
           <TradingTerminal tokenInfo={liveTokenInfo} />
         </section>
 
-        <aside className="border border-l-0 border-white/10 bg-black xl:col-span-3 xl:h-[calc(100vh-96px)]">
+        <aside className="flex min-h-0 flex-1 flex-col overflow-hidden border border-white/10 bg-black max-xl:min-h-[min(280px,45dvh)] xl:col-span-3 xl:h-full xl:max-h-full xl:min-h-0 xl:border-l-0 xl:rounded-r-xl xl:rounded-l-none">
           <TradingAssistant
             solPrice={solPrice}
             solBalance={balances[0]?.amount ?? 0}

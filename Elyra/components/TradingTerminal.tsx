@@ -69,7 +69,7 @@ export default function TradingTerminal({ tokenInfo }: TradingTerminalProps) {
   }, []);
 
   return (
-    <div className="flex h-full min-h-[720px] flex-col bg-[#070b14]">
+    <div className="flex h-full max-h-full min-h-0 flex-1 flex-col overflow-hidden bg-[#070b14]">
       <div className="flex h-12 items-center gap-4 border-b border-white/10 bg-black px-4">
         <div className="flex items-center gap-2">
           <span className="text-base font-semibold">{tokenInfo.symbol}</span>
@@ -94,7 +94,7 @@ export default function TradingTerminal({ tokenInfo }: TradingTerminalProps) {
         </div>
       </div>
 
-      <div className="relative flex-1">
+      <div className="relative min-h-0 flex-1">
         <div
           id="tradingview_chart_container"
           ref={containerRef}

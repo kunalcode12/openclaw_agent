@@ -48,7 +48,6 @@ export default function ActionModal({
   onAddressCopied,
 }: ActionModalProps) {
   void userName;
-  void statusMessage;
 
   if (!open || !isAuthenticated) {
     return null;
@@ -89,12 +88,22 @@ export default function ActionModal({
         </div>
 
         {!solAddress ? (
-          <button
-            onClick={onCreateSolWallet}
-            className="w-full rounded-lg border border-emerald-400/60 px-3 py-2 text-sm text-emerald-200 hover:bg-emerald-500/10"
-          >
-            Create Solana Wallet Account
-          </button>
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={() => {
+                void onCreateSolWallet();
+              }}
+              className="w-full rounded-lg border border-emerald-400/60 px-3 py-2 text-sm text-emerald-200 hover:bg-emerald-500/10"
+            >
+              Create Solana Wallet Account
+            </button>
+            {statusMessage ? (
+              <p className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-center text-[11px] leading-relaxed text-white/70">
+                {statusMessage}
+              </p>
+            ) : null}
+          </div>
         ) : activeAction === "deposit" ? (
           <div className="space-y-3">
             <button className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-black/50 px-3 py-1 text-xs text-white/85">
@@ -261,6 +270,12 @@ export default function ActionModal({
             </button>
           </form>
         )}
+
+        {solAddress && statusMessage ? (
+          <p className="mt-4 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-center text-[11px] leading-relaxed text-white/70">
+            {statusMessage}
+          </p>
+        ) : null}
       </div>
     </div>
   );

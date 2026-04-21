@@ -61,7 +61,7 @@ export default function Navbar({
 
   return (
     <nav
-      className="sticky top-0 z-50 border-b border-white/5 bg-linear-to-b from-black via-black to-black/80 px-6 py-2 shadow-2xl backdrop-blur-xl"
+      className="sticky top-0 z-50 shrink-0 border-b border-white/5 bg-linear-to-b from-black via-black to-black/80 px-6 py-2 shadow-2xl backdrop-blur-xl"
       title={`SOL $${solPrice.toFixed(2)}`}
     >
       <style>{`
@@ -154,19 +154,22 @@ export default function Navbar({
                   onWalletMenuOpenChange(false);
                 }}
               >
-                <button
-                  onClick={() => onWalletMenuOpenChange(!walletMenuOpen)}
-                  className="group inline-flex items-center gap-2 rounded-lg border border-white/10 bg-linear-to-br from-white/8 to-white/3 px-3.5 py-2 text-xs font-semibold text-white transition-all duration-300 hover:border-blue-500/30 hover:from-blue-500/15 hover:to-white/8 hover:shadow-lg hover:shadow-blue-500/10 hover:scale-105 active:scale-95 backdrop-blur-xl"
-                >
-                  <Wallet
-                    size={15}
-                    className="text-white/60 group-hover:text-blue-400 transition-colors duration-300"
-                  />
-                  <span className="font-mono font-bold tracking-tight">
-                    {hideBalances
-                      ? "••••"
-                      : `$${balances[0].amount.toFixed(2)}`}
-                  </span>
+                <div className="group inline-flex items-stretch overflow-hidden rounded-lg border border-white/10 bg-linear-to-br from-white/8 to-white/3 shadow-sm backdrop-blur-xl transition-all duration-300 hover:border-blue-500/30 hover:shadow-lg hover:shadow-blue-500/10">
+                  <button
+                    type="button"
+                    onClick={() => onWalletMenuOpenChange(!walletMenuOpen)}
+                    className="inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold text-white transition-all duration-300 hover:bg-blue-500/10 active:scale-[0.98]"
+                  >
+                    <Wallet
+                      size={15}
+                      className="text-white/60 group-hover:text-blue-400 transition-colors duration-300"
+                    />
+                    <span className="font-mono font-bold tracking-tight">
+                      {hideBalances
+                        ? "••••"
+                        : `$${balances[0].amount.toFixed(2)}`}
+                    </span>
+                  </button>
                   <button
                     type="button"
                     aria-label={hideBalances ? "Show balance" : "Hide balance"}
@@ -174,11 +177,11 @@ export default function Navbar({
                       event.stopPropagation();
                       onToggleHideBalances();
                     }}
-                    className="ml-1 text-white/40 transition-all duration-300 hover:text-white/80 hover:scale-110 active:scale-95"
+                    className="border-l border-white/10 px-2.5 text-white/40 transition-all duration-300 hover:bg-white/5 hover:text-white/80 active:scale-95"
                   >
                     {hideBalances ? <EyeOff size={15} /> : <Eye size={15} />}
                   </button>
-                </button>
+                </div>
 
                 {walletMenuOpen ? (
                   <div className="dropdown-slide">

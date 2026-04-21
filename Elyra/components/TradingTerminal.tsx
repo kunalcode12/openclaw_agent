@@ -70,13 +70,19 @@ export default function TradingTerminal({ tokenInfo }: TradingTerminalProps) {
 
   return (
     <div className="flex h-full min-h-[720px] flex-col bg-[#070b14]">
-      <div className="flex h-12 items-center gap-4 border-b border-white/10 bg-[#0a0f18] px-4">
+      <div className="flex h-12 items-center gap-4 border-b border-white/10 bg-black px-4">
         <div className="flex items-center gap-2">
           <span className="text-base font-semibold">{tokenInfo.symbol}</span>
           <span className="text-xs text-white/50">{tokenInfo.name}</span>
         </div>
-        <div className="text-xl font-semibold">${tokenInfo.price.toFixed(2)}</div>
-        <div className={tokenInfo.priceChange >= 0 ? "text-emerald-300" : "text-rose-300"}>
+        <div className="text-xl font-semibold">
+          ${tokenInfo.price.toFixed(2)}
+        </div>
+        <div
+          className={
+            tokenInfo.priceChange >= 0 ? "text-emerald-300" : "text-rose-300"
+          }
+        >
           {tokenInfo.priceChange >= 0 ? "+" : ""}
           {tokenInfo.priceChange.toFixed(3)}%
         </div>
@@ -98,7 +104,9 @@ export default function TradingTerminal({ tokenInfo }: TradingTerminalProps) {
       </div>
 
       <div className="flex h-9 items-center gap-4 border-t border-white/10 bg-[#0a0f18] px-4 text-xs text-white/70">
-        <button className="border-b border-indigo-400 pb-1 text-white">Positions</button>
+        <button className="border-b border-indigo-400 pb-1 text-white">
+          Positions
+        </button>
         <button>Orders</button>
         <button>History</button>
         <button>Backtest</button>

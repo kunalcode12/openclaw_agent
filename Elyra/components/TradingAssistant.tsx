@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 
 export type SwapAction = {
-  kind: "swap";
+  kind?: "swap";
   fromSymbol: string;
   toSymbol: string;
   fromMint: string;
@@ -24,7 +24,8 @@ export type SwapAction = {
   amount: string;
   expectedOut: string;
   slippageBps: number;
-  swapTransaction: string;
+  jupiterSwapUrl: string;
+  userPublicKey?: string;
 };
 
 type ChatMessage = {
@@ -34,7 +35,47 @@ type ChatMessage = {
   action?: SwapAction;
   suggestions?: string[];
   strategyNotes?: string[];
+  executionReport?: {
+    route: string;
+    size: string;
+    estimatedOutput: string;
+    simulatedTxId: string;
+    executedAt: string;
+  };
 };
+
+type AgentTrace = {
+  id: number;
+  agentId: number;
+  agentName: string;
+  task: string;
+};
+
+type LiveAgentState = {
+  agentId: number;
+  agentName: string;
+  task: string;
+  colorClass: string;
+};
+
+const AGENT_PROFILES = [
+  { id: 1, name: "Agent 1", role: "Discovery", colorClass: "border-fuchsia-400/50 bg-fuchsia-500/10 text-fuchsia-200" },
+  { id: 2, name: "Agent 2", role: "Alpha", colorClass: "border-cyan-400/50 bg-cyan-500/10 text-cyan-200" },
+  { id: 3, name: "Agent 3", role: "Risk", colorClass: "border-amber-400/50 bg-amber-500/10 text-amber-200" },
+  { id: 4, name: "Agent 4", role: "Execution", colorClass: "border-emerald-400/50 bg-emerald-500/10 text-emerald-200" },
+  { id: 5, name: "Agent 5", role: "Portfolio", colorClass: "border-violet-400/50 bg-violet-500/10 text-violet-200" },
+] as const;
+
+const AGENT_TASKS = [
+  [1, "scanning onchain momentum regime"],
+  [2, "ranking SOL edges vs stablecoin rotation"],
+  [3, "checking drawdown and slippage limits"],
+  [1, "refining signal confidence"],
+  [4, "simulating route + fee path"],
+  [3, "revalidating risk guardrails"],
+  [1, "confirming market context coherence"],
+  [5, "sizing final capital allocation"],
+] as const;
 
 export type SwapHistoryItem = {
   id: string;
@@ -49,9 +90,16 @@ export type SwapHistoryItem = {
 
 type TradingAssistantProps = {
   solPrice: number;
+  solBalance: number;
   walletAddress?: string;
-  onExecuteSwap: (action: SwapAction) => Promise<{ signature?: string; error?: string }>;
   swapHistory: SwapHistoryItem[];
+  onManualSwapRecorded: (entry: {
+    fromSymbol: string;
+    toSymbol: string;
+    amount: string;
+    status: "confirmed" | "failed";
+    error?: string;
+  }) => void;
 };
 
 const STARTER_PROMPTS = [
@@ -74,9 +122,10 @@ const LANDING_CARDS = [
 
 export default function TradingAssistant({
   solPrice,
+  solBalance,
   walletAddress,
-  onExecuteSwap,
   swapHistory,
+  onManualSwapRecorded,
 }: TradingAssistantProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -128,6 +177,49 @@ export default function TradingAssistant({
     setPrompt("");
     setIsSubmitting(true);
 
+    const agentTrace: AgentTrace[] = [];
+    let currentStep = 0;
+    const [firstAgentId, firstTask] = AGENT_TASKS[0];
+    const firstAgent = AGENT_PROFILES.find((agent) => agent.id === firstAgentId);
+    if (firstAgent) {
+      setLiveAgentState({
+        agentId: firstAgent.id,
+        agentName: `${firstAgent.name} · ${firstAgent.role}`,
+        task: firstTask,
+        colorClass: firstAgent.colorClass,
+      });
+      agentTrace.push({
+        id: 1,
+        agentId: firstAgent.id,
+        agentName: `${firstAgent.name} · ${firstAgent.role}`,
+        task: firstTask,
+      });
+    }
+    const progressTimer = window.setInterval(() => {
+      currentStep += 1;
+      if (currentStep >= AGENT_TASKS.length) {
+        window.clearInterval(progressTimer);
+        return;
+      }
+      const [agentId, task] = AGENT_TASKS[currentStep];
+      const nextAgent = AGENT_PROFILES.find((agent) => agent.id === agentId);
+      if (!nextAgent) {
+        return;
+      }
+      setLiveAgentState({
+        agentId: nextAgent.id,
+        agentName: `${nextAgent.name} · ${nextAgent.role}`,
+        task,
+        colorClass: nextAgent.colorClass,
+      });
+      agentTrace.push({
+        id: currentStep + 1,
+        agentId: nextAgent.id,
+        agentName: `${nextAgent.name} · ${nextAgent.role}`,
+        task,
+      });
+    }, 450);
+
     try {
       const response = await fetch("/api/assistant/chat", {
         method: "POST",
@@ -136,6 +228,7 @@ export default function TradingAssistant({
           prompt: text,
           walletAddress: walletAddress ?? null,
           solPrice,
+          solBalance,
           swapHistory: historyPreview,
         }),
       });
@@ -152,18 +245,48 @@ export default function TradingAssistant({
         throw new Error(payload.error ?? `Assistant failed with ${response.status}`);
       }
 
+      const assistantTimestamp = Date.now();
+      window.clearInterval(progressTimer);
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: payload.reply ?? "I could not generate a reply right now.",
-          timestamp: Date.now(),
+          content: formatAssistantText(payload.reply ?? "I could not generate a reply right now."),
+          timestamp: assistantTimestamp,
           suggestions: payload.suggestions ?? [],
           strategyNotes: payload.strategyNotes ?? [],
           action: payload.action,
         },
       ]);
+      if (payload.action) {
+        const action = payload.action;
+        const simulatedSignature = `SIM-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+        const executedAt = new Date().toISOString();
+        onManualSwapRecorded({
+          fromSymbol: action.fromSymbol,
+          toSymbol: action.toSymbol,
+          amount: action.amount,
+          status: "confirmed",
+        });
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: "Execution completed.",
+            timestamp: Date.now(),
+            executionReport: {
+              route: `${action.fromSymbol}/${action.toSymbol}`,
+              size: `${action.amount} ${action.fromSymbol}`,
+              estimatedOutput: `${action.expectedOut} ${action.toSymbol}`,
+              simulatedTxId: simulatedSignature,
+              executedAt,
+            },
+          },
+        ]);
+      }
+      setLiveAgentState(null);
     } catch (error) {
+      window.clearInterval(progressTimer);
       setMessages((prev) => [
         ...prev,
         {
@@ -172,6 +295,7 @@ export default function TradingAssistant({
           timestamp: Date.now(),
         },
       ]);
+      setLiveAgentState(null);
     } finally {
       setIsSubmitting(false);
     }

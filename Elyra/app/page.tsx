@@ -20,7 +20,6 @@ import {
 } from "@solana/spl-token";
 import { Buffer } from "buffer";
 import TradingAssistant, {
-  type SwapAction,
   type SwapHistoryItem,
 } from "@/components/TradingAssistant";
 import Navbar from "@/components/Navbar";
@@ -37,6 +36,12 @@ const RPC_FALLBACK_URLS = [
   "https://api.mainnet-beta.solana.com",
   "https://rpc.ankr.com/solana",
 ];
+  "https://solana-rpc.publicnode.com",
+  "https://rpc.ankr.com/solana",
+];
+const BLOCKED_TURNKEY_ADDRESSES = new Set([
+  "JCsFjtj6tem9Dv83Ks4HxsL7p8GhdLtokveqW7uWjGyi",
+]);
 
 const TOKEN_METADATA = {
   USDC: {
@@ -78,35 +83,56 @@ export default function Home() {
   ]);
   const [isFetchingBalances, setIsFetchingBalances] = useState(false);
   const [isSubmittingTx, setIsSubmittingTx] = useState(false);
+  const [isSolSendDisabled, setIsSolSendDisabled] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [hideBalances, setHideBalances] = useState(false);
   const [activeRpcUrl, setActiveRpcUrl] = useState(rpcUrl);
   const [blockedRpcUrls, setBlockedRpcUrls] = useState<string[]>([]);
   const [lastBalanceFetchAt, setLastBalanceFetchAt] = useState<number>(0);
+  const [nextBalanceRetryAt, setNextBalanceRetryAt] = useState<number>(0);
+  const [nowMs, setNowMs] = useState<number>(0);
   const [solPrice, setSolPrice] = useState<number>(tradingDummyToken.price);
   const [solPriceChange, setSolPriceChange] = useState<number>(
     tradingDummyToken.priceChange,
   );
   const [swapHistory, setSwapHistory] = useState<SwapHistoryItem[]>([]);
+  const [selectedSolAddress, setSelectedSolAddress] = useState<string | undefined>(undefined);
 
   const isReady = clientState === ClientState.Ready;
   const isAuthenticated = authState === AuthState.Authenticated;
 
-  const solAddress = useMemo(() => {
+  const solAddresses = useMemo(() => {
     const walletList = (wallets ?? []) as Array<{
       accounts?: Array<{ address?: string; addressFormat?: string }>;
     }>;
+    const discoveredAddresses: string[] = [];
 
     for (const wallet of walletList) {
       for (const account of wallet.accounts ?? []) {
-        if (account.addressFormat?.includes("SOLANA") && account.address) {
-          return account.address;
+        if (
+          account.addressFormat?.includes("SOLANA") &&
+          account.address &&
+          !BLOCKED_TURNKEY_ADDRESSES.has(account.address) &&
+          !discoveredAddresses.includes(account.address)
+        ) {
+          discoveredAddresses.push(account.address);
         }
       }
     }
 
-    return undefined;
+    return discoveredAddresses;
   }, [wallets]);
+
+  const solAddress = useMemo(() => {
+    if (solAddresses.length === 0) {
+      return undefined;
+    }
+    if (selectedSolAddress && solAddresses.includes(selectedSolAddress)) {
+      return selectedSolAddress;
+    }
+    return solAddresses[0];
+  }, [selectedSolAddress, solAddresses]);
+  const activeAddress = solAddress;
 
   const liveTokenInfo = useMemo<TokenInfo>(
     () => ({
@@ -118,7 +144,10 @@ export default function Home() {
   );
 
   const refreshBalances = useCallback(async () => {
-    if (!solAddress) {
+    if (!activeAddress) {
+      return;
+    }
+    if (Date.now() < nextBalanceRetryAt) {
       return;
     }
 
@@ -126,14 +155,19 @@ export default function Home() {
     setStatusMessage("");
 
     try {
-      const owner = new PublicKey(solAddress);
+      const owner = new PublicKey(activeAddress);
       const rpcCandidates = Array.from(
         new Set(
           [rpcUrl, ...RPC_FALLBACK_URLS].filter(
-            (url) => !blockedRpcUrls.includes(url),
+            (url) => url.trim().length > 0 && !blockedRpcUrls.includes(url),
           ),
         ),
       );
+      if (rpcCandidates.length === 0) {
+        // Recover from over-blocking by restoring public fallbacks for the next attempt.
+        setBlockedRpcUrls(rpcUrl ? [rpcUrl] : []);
+        throw new Error("No available RPC endpoints after filtering.");
+      }
       let lastError: unknown;
       let sawForbiddenError = false;
       let sawRateLimitError = false;
@@ -142,25 +176,30 @@ export default function Home() {
         try {
           const connection = new Connection(candidate, "confirmed");
           const lamports = await connection.getBalance(owner);
-          const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-            owner,
-            {
-              programId: TOKEN_PROGRAM_ID,
-            },
-          );
-
           let usdcAmount = 0;
           let bonkAmount = 0;
-
-          for (const tokenAccount of tokenAccounts.value) {
-            const parsedData = tokenAccount.account.data.parsed;
-            const mint = parsedData.info.mint as string;
-            const uiAmount = Number(parsedData.info.tokenAmount.uiAmount ?? 0);
-            if (mint === TOKEN_METADATA.USDC.mint) {
-              usdcAmount += uiAmount;
+          try {
+            const tokenAccounts = await connection.getParsedTokenAccountsByOwner(owner, {
+              programId: TOKEN_PROGRAM_ID,
+            });
+            for (const tokenAccount of tokenAccounts.value) {
+              const parsedData = tokenAccount.account.data.parsed;
+              const mint = parsedData.info.mint as string;
+              const uiAmount = Number(parsedData.info.tokenAmount.uiAmount ?? 0);
+              if (mint === TOKEN_METADATA.USDC.mint) {
+                usdcAmount += uiAmount;
+              }
+              if (mint === TOKEN_METADATA.BONK.mint) {
+                bonkAmount += uiAmount;
+              }
             }
-            if (mint === TOKEN_METADATA.BONK.mint) {
-              bonkAmount += uiAmount;
+          } catch (tokenError) {
+            // Do not drop SOL balance if token account parsing endpoint is throttled.
+            const tokenErrorText = String(tokenError);
+            if (tokenErrorText.includes("429")) {
+              setStatusMessage(
+                "Token account lookup is rate-limited; showing SOL balance and retrying token balances later.",
+              );
             }
           }
 
@@ -181,33 +220,42 @@ export default function Home() {
                 ? previous
                 : [...previous, candidate],
             );
+            if (candidate === rpcUrl) {
+              setBlockedRpcUrls((previous) =>
+                previous.includes(candidate) ? previous : [...previous, candidate],
+              );
+              setStatusMessage(
+                "Configured RPC key is forbidden (403). Automatically switched to public RPC fallback.",
+              );
+            }
           }
           if (errorText.includes("429")) {
             sawRateLimitError = true;
+            if (candidate === rpcUrl) {
+              setBlockedRpcUrls((previous) =>
+                previous.includes(candidate) ? previous : [...previous, candidate],
+              );
+            }
           }
           lastError = error;
         }
       }
 
-      if (sawForbiddenError && rpcCandidates.length > 1) {
+      if (sawForbiddenError || sawRateLimitError) {
         setStatusMessage(
-          "Primary RPC access is forbidden (403). Switched to fallback RPCs where possible.",
-        );
-      }
-
-      if (sawRateLimitError) {
-        setStatusMessage(
-          "RPC is rate-limited (429). Retrying with fallback endpoints automatically.",
+          sawForbiddenError
+            ? "Configured RPC key is forbidden (403). Using public fallback RPC endpoints."
+            : "Configured RPC is rate-limited (429). Using public fallback RPC endpoints.",
         );
       }
 
       throw lastError;
     } catch (error) {
-      console.error("Failed to fetch balances:", error);
       const errorText = String(error);
+      setNextBalanceRetryAt(Date.now() + 15_000);
       if (errorText.includes("403")) {
         setStatusMessage(
-          "RPC key is blocked/invalid (403). Add a valid NEXT_PUBLIC_SOLANA_RPC_URL key or keep public fallback RPCs.",
+          "RPC key is blocked/invalid (403). Remove NEXT_PUBLIC_SOLANA_RPC_URL or replace it with a blockchain-enabled key.",
         );
       } else if (errorText.includes("429")) {
         setStatusMessage(
@@ -219,10 +267,19 @@ export default function Home() {
     } finally {
       setIsFetchingBalances(false);
     }
-  }, [blockedRpcUrls, rpcUrl, solAddress]);
+  }, [activeAddress, blockedRpcUrls, nextBalanceRetryAt, rpcUrl]);
 
   useEffect(() => {
-    if (!walletMenuOpen || !isAuthenticated || !solAddress) {
+    const intervalId = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1_000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!walletMenuOpen || !activeAddress) {
       return;
     }
     if (Date.now() - lastBalanceFetchAt < 30_000) {
@@ -238,6 +295,18 @@ export default function Home() {
     lastBalanceFetchAt,
     refreshBalances,
   ]);
+  }, [walletMenuOpen, activeAddress, lastBalanceFetchAt, refreshBalances]);
+
+  useEffect(() => {
+    if (!activeAddress) {
+      return;
+    }
+    // Refresh immediately when active wallet changes.
+    queueMicrotask(() => {
+      void refreshBalances();
+    });
+  }, [activeAddress, refreshBalances]);
+
 
   useEffect(() => {
     let cancelled = false;
@@ -297,8 +366,8 @@ export default function Home() {
   const handleActionSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
 
-    if (!solAddress) {
-      setStatusMessage("No Solana wallet account found. Create one first.");
+    if (!activeAddress) {
+      setStatusMessage("No active Solana wallet address found.");
       return;
     }
 
@@ -316,8 +385,16 @@ export default function Home() {
     setIsSubmittingTx(true);
     setStatusMessage("");
 
+    if (isSolSendDisabled) {
+      setIsSubmittingTx(false);
+      setStatusMessage(
+        "Turnkey Solana send is not enabled for this organization. Enable 'sol send transaction' in Turnkey settings.",
+      );
+      return;
+    }
+
     try {
-      const owner = new PublicKey(solAddress);
+      const owner = new PublicKey(activeAddress);
       const destination = new PublicKey(targetAddress);
       const connection = new Connection(activeRpcUrl, "confirmed");
       const { blockhash } = await connection.getLatestBlockhash("confirmed");
@@ -384,7 +461,7 @@ export default function Home() {
       await handleSendTransaction({
         transaction: {
           unsignedTransaction: serializedTx,
-          signWith: solAddress,
+          signWith: activeAddress,
           caip2: SOLANA_MAINNET_CAIP2,
           recentBlockhash: blockhash,
         },
@@ -393,11 +470,24 @@ export default function Home() {
       setStatusMessage(
         `${activeAction} transaction submitted on Solana mainnet.`,
       );
+      setStatusMessage(`${activeAction} transaction submitted on Solana mainnet.`);
+
       setAmount("");
       setTargetAddress("");
       await refreshBalances();
     } catch (error) {
       console.error("Transaction failed:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (
+        errorMessage.toLowerCase().includes("sol send transaction feature is not enabled") ||
+        errorMessage.toLowerCase().includes("turnkey error 7")
+      ) {
+        setIsSolSendDisabled(true);
+        setStatusMessage(
+          "Turnkey Solana send is disabled for this organization. Please enable it in Turnkey before withdraw/transfer.",
+        );
+        return;
+      }
       setStatusMessage(
         `Transaction failed: ${error instanceof Error ? error.message : "Unknown error"}`,
       );
@@ -527,15 +617,187 @@ export default function Home() {
 
       <main className="mx-auto grid w-full max-w-[1800px] grid-cols-1 gap-0 xl:grid-cols-10">
         <section className="overflow-hidden rounded-l-xl border border-white/10 bg-black xl:col-span-7 xl:h-[calc(100vh-96px)]">
+    <div className="min-h-screen bg-[#070b14] text-white">
+      <nav className="border-b border-white/10 bg-[#0b1020] px-4 py-4">
+        <div className="mx-auto flex w-full max-w-[1800px] items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Image src="/logo.png" alt="Elyra logo" width={40} height={40} priority />
+            <span className="text-xl font-semibold tracking-wide">Elyra</span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="hidden items-center gap-2 lg:flex">
+              <span className="rounded-md border border-white/15 bg-[#0f1728] px-2 py-1 text-[10px] text-white/80">
+                Free Credits 7
+              </span>
+              <button className="rounded-md border border-white/20 bg-[#121a2d] px-2 py-1 text-[10px]">
+                Unlock
+              </button>
+              <span className="rounded-md border border-white/20 bg-[#121a2d] px-2 py-1 text-[10px]">
+                ${solPrice.toFixed(2)}
+              </span>
+              <button className="rounded-md border border-white/20 bg-[#121a2d] px-2 py-1 text-[10px]">
+                Deposit
+              </button>
+            </div>
+            {!isAuthenticated ? (
+              <button
+                onClick={() => {
+                  void handleLogin();
+                }}
+                className="rounded-lg border border-indigo-400/60 bg-indigo-500/10 px-4 py-2 text-sm font-medium text-indigo-200 hover:bg-indigo-500/20"
+              >
+                Login with Turnkey
+              </button>
+            ) : (
+              <>
+                <div
+                  className="relative"
+                  onMouseEnter={() => setWalletMenuOpen(true)}
+                  onMouseLeave={() => setWalletMenuOpen(false)}
+                >
+                  <button
+                    onClick={() => setWalletMenuOpen((open) => !open)}
+                    className="rounded-lg border border-white/20 px-3 py-2 text-sm hover:border-indigo-400/60"
+                  >
+                    Wallet • {hideBalances ? "****" : `${balances[0].amount.toFixed(4)} ${balances[0].symbol}`}
+                  </button>
+
+                  {walletMenuOpen ? (
+                    <div className="absolute right-0 mt-2 w-80 rounded-xl border border-white/10 bg-[#0f1629] p-4 shadow-xl">
+                      <p className="mb-3 text-xs text-white/60">
+                        Token balances (mainnet)
+                      </p>
+                      <div className="space-y-2">
+                        {balances.map((token) => (
+                          <div
+                            key={token.symbol}
+                            className="flex items-center justify-between rounded-lg border border-white/10 px-3 py-2 text-sm"
+                          >
+                            <span>{token.symbol}</span>
+                            <span>{hideBalances ? "****" : token.amount}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        onClick={() => setHideBalances((value) => !value)}
+                        className="mt-3 rounded-md border border-white/20 px-2 py-1 text-xs"
+                      >
+                        {hideBalances ? "Show balances" : "Hide balances"}
+                      </button>
+                      <button
+                        onClick={refreshBalances}
+                        disabled={isFetchingBalances}
+                        className="mt-2 rounded-md border border-white/20 px-2 py-1 text-xs disabled:opacity-60"
+                      >
+                        {isFetchingBalances ? "Refreshing..." : "Refresh balances"}
+                      </button>
+                      {nextBalanceRetryAt > nowMs ? (
+                        <p className="mt-1 text-[11px] text-amber-300/90">
+                          Retry in {Math.ceil((nextBalanceRetryAt - nowMs) / 1000)}s
+                        </p>
+                      ) : null}
+                      <button
+                        onClick={() => {
+                          void handleCreateSolWallet();
+                        }}
+                        className="mt-2 w-full rounded-md border border-indigo-400/60 bg-indigo-500/10 px-2 py-1 text-xs text-indigo-100"
+                      >
+                        Add Solana wallet account
+                      </button>
+                      {solAddresses.length > 0 ? (
+                        <>
+                          <p className="mt-3 text-[11px] text-white/60">Active wallet</p>
+                          <select
+                            value={solAddress ?? ""}
+                            onChange={(event) => {
+                              setSelectedSolAddress(event.target.value || undefined);
+                              setLastBalanceFetchAt(0);
+                            }}
+                            className="mt-1 w-full rounded-md border border-white/20 bg-[#0b1120] px-2 py-1.5 text-xs text-white"
+                          >
+                            {solAddresses.map((address) => (
+                              <option key={address} value={address}>
+                                {address}
+                              </option>
+                            ))}
+                          </select>
+                        </>
+                      ) : null}
+                      <p className="mt-2 text-[11px] text-white/50">RPC: {activeRpcUrl}</p>
+                    </div>
+                  ) : null}
+                </div>
+
+                <button
+                  onClick={() => {
+                    setActiveAction("deposit");
+                    setActionModalOpen(true);
+                  }}
+                  className="rounded-lg border border-indigo-400/60 bg-indigo-500/10 px-4 py-2 text-sm font-medium text-indigo-100"
+                >
+                  Deposit
+                </button>
+
+                <div className="relative">
+                  <button
+                    onClick={() => setProfileMenuOpen((open) => !open)}
+                    className="rounded-lg border border-white/20 px-3 py-2 text-sm"
+                  >
+                    {user?.userName?.[0]?.toUpperCase() ?? "P"}
+                  </button>
+                  {profileMenuOpen ? (
+                    <div className="absolute right-0 mt-2 w-80 rounded-xl border border-white/10 bg-[#0f1629] p-4 shadow-xl">
+                      <p className="text-xs text-white/60">Profile</p>
+                      <p className="mt-2 text-sm text-white/80">{user?.userName ?? "Turnkey user"}</p>
+                      <p className="mt-3 text-xs text-white/60">
+                        Active Turnkey Solana address
+                      </p>
+                      <p className="mt-1 rounded-lg border border-white/10 bg-black/20 p-2 text-xs break-all">
+                        {activeAddress ?? "No Solana wallet account"}
+                      </p>
+                      <button
+                        onClick={() => {
+                          void logout();
+                        }}
+                        className="mt-3 w-full rounded-md border border-red-400/60 px-2 py-1.5 text-xs text-red-200"
+                      >
+                        Logout
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </nav>
+
+      <main className="mx-auto grid w-full max-w-[1800px] grid-cols-1 gap-0 p-3 xl:grid-cols-10">
+        <section className="overflow-hidden rounded-l-xl border border-white/10 bg-[#0b0f19] xl:col-span-7 xl:h-[calc(100vh-96px)]">
           <TradingTerminal tokenInfo={liveTokenInfo} />
         </section>
 
         <aside className=" border border-l-0 border-white/10 bg-black xl:col-span-3 xl:h-[calc(100vh-96px)]">
           <TradingAssistant
             solPrice={solPrice}
-            walletAddress={solAddress}
-            onExecuteSwap={executeSwapFromChat}
+            solBalance={balances[0]?.amount ?? 0}
+            walletAddress={activeAddress}
             swapHistory={swapHistory}
+            onManualSwapRecorded={(entry) => {
+              setSwapHistory((previous) => [
+                {
+                  id: crypto.randomUUID(),
+                  fromSymbol: entry.fromSymbol,
+                  toSymbol: entry.toSymbol,
+                  amount: entry.amount,
+                  status: entry.status,
+                  createdAt: Date.now(),
+                  error: entry.error,
+                },
+                ...previous,
+              ]);
+            }}
           />
         </aside>
       </main>

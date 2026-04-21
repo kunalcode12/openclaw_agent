@@ -32,7 +32,14 @@ type TokenBalance = {
 
 const SOLANA_MAINNET_CAIP2 = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
 const DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com";
-const RPC_FALLBACK_URLS = ["https://api.mainnet-beta.solana.com", "https://rpc.ankr.com/solana"];
+const RPC_FALLBACK_URLS = [
+  "https://api.mainnet-beta.solana.com",
+  "https://solana-rpc.publicnode.com",
+  "https://rpc.ankr.com/solana",
+];
+const BLOCKED_TURNKEY_ADDRESSES = new Set([
+  "JCsFjtj6tem9Dv83Ks4HxsL7p8GhdLtokveqW7uWjGyi",
+]);
 
 const TOKEN_METADATA = {
   USDC: {
@@ -77,28 +84,48 @@ export default function Home() {
   const [activeRpcUrl, setActiveRpcUrl] = useState(rpcUrl);
   const [blockedRpcUrls, setBlockedRpcUrls] = useState<string[]>([]);
   const [lastBalanceFetchAt, setLastBalanceFetchAt] = useState<number>(0);
+  const [nextBalanceRetryAt, setNextBalanceRetryAt] = useState<number>(0);
+  const [nowMs, setNowMs] = useState<number>(0);
   const [solPrice, setSolPrice] = useState<number>(tradingDummyToken.price);
   const [solPriceChange, setSolPriceChange] = useState<number>(tradingDummyToken.priceChange);
   const [swapHistory, setSwapHistory] = useState<SwapHistoryItem[]>([]);
+  const [selectedSolAddress, setSelectedSolAddress] = useState<string | undefined>(undefined);
 
   const isReady = clientState === ClientState.Ready;
   const isAuthenticated = authState === AuthState.Authenticated;
 
-  const solAddress = useMemo(() => {
+  const solAddresses = useMemo(() => {
     const walletList = (wallets ?? []) as Array<{
       accounts?: Array<{ address?: string; addressFormat?: string }>;
     }>;
+    const discoveredAddresses: string[] = [];
 
     for (const wallet of walletList) {
       for (const account of wallet.accounts ?? []) {
-        if (account.addressFormat?.includes("SOLANA") && account.address) {
-          return account.address;
+        if (
+          account.addressFormat?.includes("SOLANA") &&
+          account.address &&
+          !BLOCKED_TURNKEY_ADDRESSES.has(account.address) &&
+          !discoveredAddresses.includes(account.address)
+        ) {
+          discoveredAddresses.push(account.address);
         }
       }
     }
 
-    return undefined;
+    return discoveredAddresses;
   }, [wallets]);
+
+  const solAddress = useMemo(() => {
+    if (solAddresses.length === 0) {
+      return undefined;
+    }
+    if (selectedSolAddress && solAddresses.includes(selectedSolAddress)) {
+      return selectedSolAddress;
+    }
+    return solAddresses[0];
+  }, [selectedSolAddress, solAddresses]);
+  const activeAddress = solAddress;
 
   const liveTokenInfo = useMemo<TokenInfo>(
     () => ({
@@ -110,7 +137,10 @@ export default function Home() {
   );
 
   const refreshBalances = useCallback(async () => {
-    if (!solAddress) {
+    if (!activeAddress) {
+      return;
+    }
+    if (Date.now() < nextBalanceRetryAt) {
       return;
     }
 
@@ -118,10 +148,19 @@ export default function Home() {
     setStatusMessage("");
 
     try {
-      const owner = new PublicKey(solAddress);
+      const owner = new PublicKey(activeAddress);
       const rpcCandidates = Array.from(
-        new Set([rpcUrl, ...RPC_FALLBACK_URLS].filter((url) => !blockedRpcUrls.includes(url))),
+        new Set(
+          [rpcUrl, ...RPC_FALLBACK_URLS].filter(
+            (url) => url.trim().length > 0 && !blockedRpcUrls.includes(url),
+          ),
+        ),
       );
+      if (rpcCandidates.length === 0) {
+        // Recover from over-blocking by restoring public fallbacks for the next attempt.
+        setBlockedRpcUrls(rpcUrl ? [rpcUrl] : []);
+        throw new Error("No available RPC endpoints after filtering.");
+      }
       let lastError: unknown;
       let sawForbiddenError = false;
       let sawRateLimitError = false;
@@ -130,22 +169,30 @@ export default function Home() {
         try {
           const connection = new Connection(candidate, "confirmed");
           const lamports = await connection.getBalance(owner);
-          const tokenAccounts = await connection.getParsedTokenAccountsByOwner(owner, {
-            programId: TOKEN_PROGRAM_ID,
-          });
-
           let usdcAmount = 0;
           let bonkAmount = 0;
-
-          for (const tokenAccount of tokenAccounts.value) {
-            const parsedData = tokenAccount.account.data.parsed;
-            const mint = parsedData.info.mint as string;
-            const uiAmount = Number(parsedData.info.tokenAmount.uiAmount ?? 0);
-            if (mint === TOKEN_METADATA.USDC.mint) {
-              usdcAmount += uiAmount;
+          try {
+            const tokenAccounts = await connection.getParsedTokenAccountsByOwner(owner, {
+              programId: TOKEN_PROGRAM_ID,
+            });
+            for (const tokenAccount of tokenAccounts.value) {
+              const parsedData = tokenAccount.account.data.parsed;
+              const mint = parsedData.info.mint as string;
+              const uiAmount = Number(parsedData.info.tokenAmount.uiAmount ?? 0);
+              if (mint === TOKEN_METADATA.USDC.mint) {
+                usdcAmount += uiAmount;
+              }
+              if (mint === TOKEN_METADATA.BONK.mint) {
+                bonkAmount += uiAmount;
+              }
             }
-            if (mint === TOKEN_METADATA.BONK.mint) {
-              bonkAmount += uiAmount;
+          } catch (tokenError) {
+            // Do not drop SOL balance if token account parsing endpoint is throttled.
+            const tokenErrorText = String(tokenError);
+            if (tokenErrorText.includes("429")) {
+              setStatusMessage(
+                "Token account lookup is rate-limited; showing SOL balance and retrying token balances later.",
+              );
             }
           }
 
@@ -161,36 +208,42 @@ export default function Home() {
           const errorText = String(error);
           if (errorText.includes("403")) {
             sawForbiddenError = true;
-            setBlockedRpcUrls((previous) =>
-              previous.includes(candidate) ? previous : [...previous, candidate],
-            );
+            if (candidate === rpcUrl) {
+              setBlockedRpcUrls((previous) =>
+                previous.includes(candidate) ? previous : [...previous, candidate],
+              );
+              setStatusMessage(
+                "Configured RPC key is forbidden (403). Automatically switched to public RPC fallback.",
+              );
+            }
           }
           if (errorText.includes("429")) {
             sawRateLimitError = true;
+            if (candidate === rpcUrl) {
+              setBlockedRpcUrls((previous) =>
+                previous.includes(candidate) ? previous : [...previous, candidate],
+              );
+            }
           }
           lastError = error;
         }
       }
 
-      if (sawForbiddenError && rpcCandidates.length > 1) {
+      if (sawForbiddenError || sawRateLimitError) {
         setStatusMessage(
-          "Primary RPC access is forbidden (403). Switched to fallback RPCs where possible.",
-        );
-      }
-
-      if (sawRateLimitError) {
-        setStatusMessage(
-          "RPC is rate-limited (429). Retrying with fallback endpoints automatically.",
+          sawForbiddenError
+            ? "Configured RPC key is forbidden (403). Using public fallback RPC endpoints."
+            : "Configured RPC is rate-limited (429). Using public fallback RPC endpoints.",
         );
       }
 
       throw lastError;
     } catch (error) {
-      console.error("Failed to fetch balances:", error);
       const errorText = String(error);
+      setNextBalanceRetryAt(Date.now() + 15_000);
       if (errorText.includes("403")) {
         setStatusMessage(
-          "RPC key is blocked/invalid (403). Add a valid NEXT_PUBLIC_SOLANA_RPC_URL key or keep public fallback RPCs.",
+          "RPC key is blocked/invalid (403). Remove NEXT_PUBLIC_SOLANA_RPC_URL or replace it with a blockchain-enabled key.",
         );
       } else if (errorText.includes("429")) {
         setStatusMessage(
@@ -202,10 +255,19 @@ export default function Home() {
     } finally {
       setIsFetchingBalances(false);
     }
-  }, [blockedRpcUrls, rpcUrl, solAddress]);
+  }, [activeAddress, blockedRpcUrls, nextBalanceRetryAt, rpcUrl]);
 
   useEffect(() => {
-    if (!walletMenuOpen || !isAuthenticated || !solAddress) {
+    const intervalId = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1_000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!walletMenuOpen || !activeAddress) {
       return;
     }
     if (Date.now() - lastBalanceFetchAt < 30_000) {
@@ -214,7 +276,18 @@ export default function Home() {
     queueMicrotask(() => {
       void refreshBalances();
     });
-  }, [walletMenuOpen, isAuthenticated, solAddress, lastBalanceFetchAt, refreshBalances]);
+  }, [walletMenuOpen, activeAddress, lastBalanceFetchAt, refreshBalances]);
+
+  useEffect(() => {
+    if (!activeAddress) {
+      return;
+    }
+    // Refresh immediately when active wallet changes.
+    queueMicrotask(() => {
+      void refreshBalances();
+    });
+  }, [activeAddress, refreshBalances]);
+
 
   useEffect(() => {
     let cancelled = false;
@@ -270,8 +343,8 @@ export default function Home() {
   const handleActionSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
 
-    if (!solAddress) {
-      setStatusMessage("No Solana wallet account found. Create one first.");
+    if (!activeAddress) {
+      setStatusMessage("No active Solana wallet address found.");
       return;
     }
 
@@ -290,7 +363,7 @@ export default function Home() {
     setStatusMessage("");
 
     try {
-      const owner = new PublicKey(solAddress);
+      const owner = new PublicKey(activeAddress);
       const destination = new PublicKey(targetAddress);
       const connection = new Connection(activeRpcUrl, "confirmed");
       const { blockhash } = await connection.getLatestBlockhash("confirmed");
@@ -348,13 +421,13 @@ export default function Home() {
       await handleSendTransaction({
         transaction: {
           unsignedTransaction: serializedTx,
-          signWith: solAddress,
+          signWith: activeAddress,
           caip2: SOLANA_MAINNET_CAIP2,
           recentBlockhash: blockhash,
         },
       });
-
       setStatusMessage(`${activeAction} transaction submitted on Solana mainnet.`);
+
       setAmount("");
       setTargetAddress("");
       await refreshBalances();
@@ -370,7 +443,7 @@ export default function Home() {
 
   const executeSwapFromChat = useCallback(
     async (action: SwapAction) => {
-      if (!solAddress) {
+      if (!activeAddress) {
         return { error: "No Solana wallet found." };
       }
 
@@ -396,7 +469,7 @@ export default function Home() {
         const result = await handleSendTransaction({
           transaction: {
             unsignedTransaction: action.swapTransaction,
-            signWith: solAddress,
+            signWith: activeAddress,
             caip2: SOLANA_MAINNET_CAIP2,
             recentBlockhash,
           },
@@ -440,7 +513,7 @@ export default function Home() {
         return { error: errorMessage };
       }
     },
-    [handleSendTransaction, refreshBalances, solAddress],
+    [activeAddress, handleSendTransaction, refreshBalances],
   );
 
   if (!isReady) {
@@ -482,7 +555,7 @@ export default function Home() {
                 }}
                 className="rounded-lg border border-indigo-400/60 bg-indigo-500/10 px-4 py-2 text-sm font-medium text-indigo-200 hover:bg-indigo-500/20"
               >
-                Login with Turnkey (Google enabled)
+                Login with Turnkey
               </button>
             ) : (
               <>
@@ -527,6 +600,38 @@ export default function Home() {
                       >
                         {isFetchingBalances ? "Refreshing..." : "Refresh balances"}
                       </button>
+                      {nextBalanceRetryAt > nowMs ? (
+                        <p className="mt-1 text-[11px] text-amber-300/90">
+                          Retry in {Math.ceil((nextBalanceRetryAt - nowMs) / 1000)}s
+                        </p>
+                      ) : null}
+                      <button
+                        onClick={() => {
+                          void handleCreateSolWallet();
+                        }}
+                        className="mt-2 w-full rounded-md border border-indigo-400/60 bg-indigo-500/10 px-2 py-1 text-xs text-indigo-100"
+                      >
+                        Add Solana wallet account
+                      </button>
+                      {solAddresses.length > 0 ? (
+                        <>
+                          <p className="mt-3 text-[11px] text-white/60">Active wallet</p>
+                          <select
+                            value={solAddress ?? ""}
+                            onChange={(event) => {
+                              setSelectedSolAddress(event.target.value || undefined);
+                              setLastBalanceFetchAt(0);
+                            }}
+                            className="mt-1 w-full rounded-md border border-white/20 bg-[#0b1120] px-2 py-1.5 text-xs text-white"
+                          >
+                            {solAddresses.map((address) => (
+                              <option key={address} value={address}>
+                                {address}
+                              </option>
+                            ))}
+                          </select>
+                        </>
+                      ) : null}
                       <p className="mt-2 text-[11px] text-white/50">RPC: {activeRpcUrl}</p>
                     </div>
                   ) : null}
@@ -553,9 +658,11 @@ export default function Home() {
                     <div className="absolute right-0 mt-2 w-80 rounded-xl border border-white/10 bg-[#0f1629] p-4 shadow-xl">
                       <p className="text-xs text-white/60">Profile</p>
                       <p className="mt-2 text-sm text-white/80">{user?.userName ?? "Turnkey user"}</p>
-                      <p className="mt-3 text-xs text-white/60">Solana address</p>
+                      <p className="mt-3 text-xs text-white/60">
+                        Active Turnkey Solana address
+                      </p>
                       <p className="mt-1 rounded-lg border border-white/10 bg-black/20 p-2 text-xs break-all">
-                        {solAddress ?? "No Solana wallet account"}
+                        {activeAddress ?? "No Solana wallet account"}
                       </p>
                       <button
                         onClick={() => {
@@ -582,7 +689,8 @@ export default function Home() {
         <aside className="rounded-r-xl border border-l-0 border-white/10 bg-[#090d1a] p-4 xl:col-span-3 xl:h-[calc(100vh-96px)]">
           <TradingAssistant
             solPrice={solPrice}
-            walletAddress={solAddress}
+            solBalance={balances[0]?.amount ?? 0}
+            walletAddress={activeAddress}
             onExecuteSwap={executeSwapFromChat}
             swapHistory={swapHistory}
           />
@@ -622,9 +730,11 @@ export default function Home() {
               </button>
             </div>
 
-            {!solAddress ? (
+            {!activeAddress ? (
               <button
-                onClick={handleCreateSolWallet}
+                onClick={() => {
+                  void handleCreateSolWallet();
+                }}
                 className="rounded-lg border border-emerald-400/60 px-3 py-2 text-sm text-emerald-200 hover:bg-emerald-500/10"
               >
                 Create Solana Wallet Account
@@ -633,11 +743,11 @@ export default function Home() {
               <div className="space-y-3">
                 <p className="text-sm text-white/70">Send only Solana assets to this address:</p>
                 <p className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs break-all">
-                  {solAddress}
+                  {activeAddress}
                 </p>
                 <button
                   onClick={async () => {
-                    await navigator.clipboard.writeText(solAddress);
+                    await navigator.clipboard.writeText(activeAddress);
                     setStatusMessage("Address copied.");
                   }}
                   className="w-full rounded-lg border border-indigo-400/70 bg-indigo-500/20 px-3 py-2 text-sm"
@@ -679,7 +789,9 @@ export default function Home() {
             )}
 
             <div className="mt-4 flex items-center justify-between">
-              <p className="text-xs text-white/60">{user?.userName ?? "Turnkey user"}</p>
+              <p className="text-xs text-white/60">
+                {user?.userName ?? "Turnkey user"}
+              </p>
             </div>
             {statusMessage ? <p className="mt-3 text-xs text-white/70">{statusMessage}</p> : null}
           </div>

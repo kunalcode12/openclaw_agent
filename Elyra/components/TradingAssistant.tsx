@@ -1,6 +1,19 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  Bot,
+  Search,
+  PencilLine,
+  Sparkles,
+  Plus,
+  RotateCcw,
+  CircleHelp,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 
 export type SwapAction = {
   kind?: "swap";
@@ -96,6 +109,17 @@ const STARTER_PROMPTS = [
   "Suggest a low-risk Solana strategy for today",
 ];
 
+const LANDING_CARDS = [
+  { title: "Draw support & resistance levels", subtitle: "Strategy", icon: PencilLine },
+  { title: "Volatility Regime Analyzer", subtitle: "Research", icon: Search },
+  { title: "Backtest 2 years btc DCA", subtitle: "Strategy", icon: Bot },
+  { title: "Meteora DAMM & LST Yield Allocation Optimizer", subtitle: "Strategy", icon: Sparkles },
+  { title: "Momentum breakout scanner", subtitle: "Research", icon: Search },
+  { title: "SOL mean reversion setup", subtitle: "Strategy", icon: Bot },
+  { title: "Whale flow sentiment tracker", subtitle: "Research", icon: Sparkles },
+  { title: "Risk-adjusted portfolio rebalance", subtitle: "Strategy", icon: PencilLine },
+];
+
 export default function TradingAssistant({
   solPrice,
   solBalance,
@@ -113,18 +137,20 @@ export default function TradingAssistant({
   ]);
   const [prompt, setPrompt] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [liveAgentState, setLiveAgentState] = useState<LiveAgentState | null>(null);
-  const formatAssistantText = (text: string) => {
-    const cleaned = text.replace(/^Acknowledged\.\s*/i, "").trim();
-    return cleaned
-      .replace(/\r\n/g, "\n")
-      .split("\n")
-      .map((line) => line.trim())
-      .join("\n")
-      .replace(/\n{3,}/g, "\n\n");
-  };
+  const [executingSwapAt, setExecutingSwapAt] = useState<number | null>(null);
+  const [, setLiveAgentState] = useState<LiveAgentState | null>(null);
+  const [landingStartIndex, setLandingStartIndex] = useState(0);
+  const [showInputSuggestions, setShowInputSuggestions] = useState(true);
 
-
+  const canTrade = Boolean(walletAddress);
+  const showLanding = messages.length <= 1;
+  const visibleLandingCards = useMemo(() => {
+    const pageSize = 4;
+    return Array.from({ length: pageSize }, (_, offset) => {
+      const index = (landingStartIndex + offset) % LANDING_CARDS.length;
+      return LANDING_CARDS[index];
+    });
+  }, [landingStartIndex]);
   const historyPreview = useMemo(
     () => swapHistory.slice(0, 5).map(({ fromSymbol, toSymbol, amount, status, createdAt }) => ({
       fromSymbol,
@@ -281,204 +307,308 @@ export default function TradingAssistant({
     await submitPrompt();
   };
 
+  const formatAssistantText = (text: string) => text;
+
+  const runSwap = async (action: SwapAction, messageTimestamp: number) => {
+    if (!canTrade) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "Connect or create a Solana wallet first to execute swaps.",
+          timestamp: Date.now(),
+        },
+      ]);
+      return;
+    }
+
+    setExecutingSwapAt(messageTimestamp);
+    const simulatedSignature = `SIM-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+    onManualSwapRecorded({
+      fromSymbol: action.fromSymbol,
+      toSymbol: action.toSymbol,
+      amount: action.amount,
+      status: "confirmed",
+    });
+    const result: { signature?: string; error?: string } = { signature: simulatedSignature };
+    setExecutingSwapAt(null);
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "assistant",
+        content: result.signature
+          ? `Swap submitted successfully. Signature: ${result.signature}`
+          : `Swap failed: ${result.error ?? "Unknown error"}`,
+        timestamp: Date.now(),
+      },
+    ]);
+  };
+
+  useEffect(() => {
+    if (!showLanding) {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      setLandingStartIndex((prev) => (prev + 1) % LANDING_CARDS.length);
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [showLanding]);
+
+  const shiftLandingCards = (direction: "prev" | "next") => {
+    setLandingStartIndex((prev) => {
+      if (direction === "next") {
+        return (prev + 1) % LANDING_CARDS.length;
+      }
+      return (prev - 1 + LANDING_CARDS.length) % LANDING_CARDS.length;
+    });
+  };
+
   return (
-    <div className="flex h-full flex-col">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <p className="text-lg font-semibold">Solana Assistant</p>
-          <p className="text-xs text-white/50">Gemini + Jupiter Swap</p>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-black text-white">
+      <div className="mb-2 flex items-center justify-between px-4 py-3">
+        <div className="text-sm font-bold text-white">New chat</div>
+        <div className="flex items-center gap-3 text-white/60">
+          <button className="hover:text-white" aria-label="New chat">
+            <Plus size={13} />
+          </button>
+          <button className="hover:text-white" aria-label="History">
+            <RotateCcw size={13} />
+          </button>
+          <button className="hover:text-white" aria-label="Help">
+            <CircleHelp size={13} />
+          </button>
         </div>
       </div>
 
-      <div className="mb-3 rounded-xl border border-white/10 bg-[#0f1628] p-3 text-xs text-white/75">
-        Live SOL: <span className="font-semibold text-white">${solPrice.toFixed(2)}</span>
-        <br />
-        Wallet:{" "}
-        <span className="font-mono text-[11px] text-white/60">
-          {walletAddress ?? "No wallet connected"}
-        </span>
-      </div>
+      {showLanding ? (
+        <div className="flex min-h-0 flex-1 flex-col px-4 pb-3">
+          <div className="min-h-0 flex-1">
+            <div className="mx-auto flex h-full w-full max-w-[94%] flex-col justify-center py-1 text-center">
+              <div className="mx-auto flex w-fit items-center gap-2">
+                <Image src="/logo.png" alt="Elyra" width={22} height={22} className="rounded-full" />
+                <h2 className="text-lg font-extrabold leading-none text-white sm:text-xl">Elyra</h2>
+              </div>
+              <p className="mt-1 text-base font-bold leading-none text-white sm:text-lg">Keep your money moving</p>
+              <p className="mt-1 text-[11px] font-semibold text-[#a69ef0] sm:text-xs">How can I help you today?</p>
 
-      <div className="mb-3 rounded-xl border border-indigo-400/20 bg-indigo-500/5 p-3">
-        <p className="text-[11px] uppercase tracking-[0.15em] text-indigo-200/80">
-          Autonomous Capital Swarms
-        </p>
-        <p className="mt-1 text-xs text-white/70">
-          5 autonomous hedge-fund agents for discovery, alpha, risk, execution, and management.
-        </p>
-      </div>
-
-      <div className="flex-1 space-y-3 overflow-y-auto pr-1">
-        {messages.map((message) => (
-          <div
-            key={`${message.timestamp}-${message.role}`}
-            className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-          >
-            <div
-              className={`w-full max-w-[92%] rounded-2xl border p-3 shadow-[0_10px_30px_rgba(0,0,0,0.25)] ${
-                message.role === "user"
-                  ? "border-indigo-300/40 bg-gradient-to-br from-indigo-500/25 via-indigo-500/10 to-[#1a2240]"
-                  : "border-white/10 bg-gradient-to-br from-[#101a30] via-[#0d1324] to-[#090f1d]"
-              }`}
-            >
-              <div className="mb-2 flex items-center gap-2">
-                <span
-                  className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-semibold ${
-                    message.role === "user"
-                      ? "bg-indigo-300/30 text-indigo-100"
-                      : "bg-emerald-300/20 text-emerald-100"
-                  }`}
-                >
-                  {message.role === "user" ? "Q" : "A"}
-                </span>
-                <p className="text-[11px] uppercase tracking-[0.14em] text-white/45">
-                  {message.role === "user" ? "Question" : "Response"}
-                </p>
+              <div className="mt-3 overflow-hidden text-left">
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={landingStartIndex}
+                    initial={{ x: 28, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    exit={{ x: -28, opacity: 0 }}
+                    transition={{ duration: 0.35, ease: "easeInOut" }}
+                    className="space-y-1.5"
+                  >
+                    {visibleLandingCards.map((card) => {
+                      const Icon = card.icon;
+                      return (
+                        <button
+                          key={card.title}
+                          onClick={() => {
+                            void submitPrompt(card.title);
+                          }}
+                          className="w-full border border-indigo-400/25 bg-black px-2.5 py-1.5 hover:border-indigo-400/45"
+                        >
+                          <div className="flex items-start gap-2.5">
+                            <Icon size={12} className="mt-0.5 text-indigo-300/90" />
+                            <div className="min-w-0">
+                              <p className="truncate text-[11px] font-semibold text-white sm:text-xs">{card.title}</p>
+                              <p className="text-[10px] text-white/45">{card.subtitle}</p>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </motion.div>
+                </AnimatePresence>
               </div>
 
-              <p className="whitespace-pre-line text-[14px] leading-7 text-white/92">{message.content}</p>
-
-              {message.executionReport ? (
-                <div className="mt-3 overflow-hidden rounded-xl border border-emerald-400/30 bg-[#07150f] shadow-[0_0_0_1px_rgba(16,185,129,0.08)]">
-                  <div className="flex items-center justify-between border-b border-emerald-400/20 bg-emerald-500/10 px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-emerald-300/40 bg-emerald-500/20 text-emerald-200">
-                        ✓
-                      </span>
-                      <p className="text-xs font-semibold tracking-wide text-emerald-200">
-                        EXECUTION SUCCESS
-                      </p>
-                      <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-300" />
-                    </div>
-                    <p className="text-[11px] text-emerald-100/80">
-                      {new Date(message.executionReport.executedAt).toLocaleTimeString()}
-                    </p>
-                  </div>
-                  <div className="grid gap-2 px-3 py-3 text-xs text-emerald-50/90">
-                    <div className="flex items-center justify-between rounded-md border border-emerald-400/20 bg-emerald-500/5 px-2 py-1.5">
-                      <span className="text-emerald-200/85">Route</span>
-                      <span className="font-mono">{message.executionReport.route}</span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-md border border-emerald-400/20 bg-emerald-500/5 px-2 py-1.5">
-                      <span className="text-emerald-200/85">Size</span>
-                      <span className="font-mono">{message.executionReport.size}</span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-md border border-emerald-400/20 bg-emerald-500/5 px-2 py-1.5">
-                      <span className="text-emerald-200/85">Estimated Out</span>
-                      <span className="font-mono">{message.executionReport.estimatedOutput}</span>
-                    </div>
-                    <div className="mt-1">
-                      <p className="mb-1 text-[11px] uppercase tracking-wide text-emerald-200/75">
-                        Simulated Tx ID
-                      </p>
-                      <code className="block rounded-md border border-emerald-400/20 bg-black/30 px-2 py-1.5 font-mono text-[11px] text-emerald-100/90">
-                        {message.executionReport.simulatedTxId}
-                      </code>
-                    </div>
-                  </div>
+              <div className="mt-2 flex items-center justify-between">
+                <p className="text-[11px] text-white/45">currently only on Solana</p>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    aria-label="Previous suggestions"
+                    onClick={() => shiftLandingCards("prev")}
+                    className="border border-white/15 bg-black/50 p-1 text-white/80 hover:bg-white/10 hover:text-white"
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Next suggestions"
+                    onClick={() => shiftLandingCards("next")}
+                    className="border border-white/15 bg-black/50 p-1 text-white/80 hover:bg-white/10 hover:text-white"
+                  >
+                    <ChevronRight size={14} />
+                  </button>
                 </div>
-              ) : null}
+              </div>
+            </div>
+          </div>
 
-              {message.strategyNotes && message.strategyNotes.length > 0 ? (
-                <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-2">
-                  <p className="text-[11px] uppercase tracking-wide text-white/50">
-                    Technical Strategy Suggestions
-                  </p>
-                  <ul className="mt-1 space-y-1 text-xs text-white/80">
-                    {message.strategyNotes.map((note) => (
-                      <li key={note}>- {note}</li>
+          <form onSubmit={handleSubmit} className="mt-2 shrink-0">
+            <div className="border border-indigo-400/25 bg-black p-2">
+              <input
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder="Ask about trades or / for shortcuts"
+                className="w-full bg-transparent px-2 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none"
+              />
+              <div className="flex items-center justify-between px-2 pb-1">
+                <span className="text-white/40">⌄</span>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="border border-indigo-400/50 bg-indigo-500/20 px-2 py-1 text-xs text-white disabled:opacity-60"
+                >
+                  ↑
+                </button>
+              </div>
+            </div>
+          </form>
+          <p className="mt-2 px-1 text-[10px] text-white/35">
+            Elyra gives guidance, not certainty. Review key information.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="px-4">
+            <div className="mb-3 border border-white/10 bg-black p-3 text-[11px] text-white/75">
+              Live SOL: <span className="font-semibold text-white">${solPrice.toFixed(2)}</span>
+              <br />
+              Wallet:{" "}
+              <span className="font-mono text-[11px] text-white/60">
+                {walletAddress ?? "No wallet connected"}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex-1 space-y-3 overflow-y-auto px-4 pr-2 [scrollbar-width:thin] [scrollbar-color:#1f1f1f_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#1f1f1f] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-[#2a2a2a]">
+            {messages.map((message) => (
+              <div
+                key={`${message.timestamp}-${message.role}`}
+                className={`border p-3 ${
+                  message.role === "user"
+                    ? "ml-8 border-indigo-400/35 bg-black"
+                    : "mr-8 border-white/10 bg-black"
+                }`}
+              >
+                <p className="text-xs font-semibold text-white">{message.content}</p>
+
+                {message.strategyNotes && message.strategyNotes.length > 0 ? (
+                  <div className="mt-3 border border-white/10 bg-black/20 p-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-white/60">Backtest / Strategy</p>
+                    <ul className="mt-1 space-y-1 text-[11px] text-white/80">
+                      {message.strategyNotes.map((note) => (
+                        <li key={note}>- {note}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {message.suggestions && message.suggestions.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {message.suggestions.map((item) => (
+                      <button
+                        key={item}
+                        onClick={() => {
+                          void submitPrompt(item);
+                        }}
+                        className="border border-white/15 bg-black px-2 py-1 text-[11px] text-white/75 hover:bg-white/5"
+                      >
+                        {item}
+                      </button>
                     ))}
-                  </ul>
-                </div>
-              ) : null}
+                  </div>
+                ) : null}
 
-              {message.suggestions && message.suggestions.length > 0 ? (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {message.suggestions.map((item) => (
+                {message.action?.kind === "swap" ? (
+                  <div className="mt-3 border border-emerald-400/35 bg-black p-3">
+                    <p className="text-xs font-semibold text-emerald-200">
+                      Swap {message.action.amount} {message.action.fromSymbol} to {message.action.toSymbol}
+                    </p>
+                    <p className="mt-1 text-[11px] text-emerald-100/80">
+                      Expected output: {message.action.expectedOut} {message.action.toSymbol}
+                    </p>
+                    <button
+                      onClick={() => {
+                        void runSwap(message.action as SwapAction, message.timestamp);
+                      }}
+                      disabled={!canTrade || executingSwapAt === message.timestamp}
+                      className="mt-2 border border-emerald-300/45 bg-emerald-500/10 px-3 py-1.5 text-[11px] text-emerald-100 disabled:opacity-60"
+                    >
+                      {executingSwapAt === message.timestamp ? "Executing swap..." : "Execute swap"}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 space-y-2 px-4 pb-3">
+            {showInputSuggestions ? (
+              <div className="relative border border-white/10 bg-black p-2 pr-8">
+                <button
+                  type="button"
+                  aria-label="Hide suggestions"
+                  onClick={() => setShowInputSuggestions(false)}
+                  className="absolute right-2 top-1.5 text-white/55 hover:text-white"
+                >
+                  ×
+                </button>
+                <div className="flex flex-wrap gap-2">
+                  {STARTER_PROMPTS.map((item) => (
                     <button
                       key={item}
                       onClick={() => {
                         void submitPrompt(item);
                       }}
-                      className="rounded-md border border-white/15 bg-[#10192d] px-2 py-1 text-xs text-white/80 hover:bg-[#12213d]"
+                      className="border border-white/10 bg-black px-2 py-1 text-[11px] font-semibold text-white/85 hover:bg-white/5"
                     >
                       {item}
                     </button>
                   ))}
                 </div>
-              ) : null}
+              </div>
+            ) : null}
 
-              {message.action?.jupiterSwapUrl ? (
-                <div className="mt-3 rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-3">
-                  <p className="text-sm text-emerald-200">
-                    Ready to swap {message.action.amount} {message.action.fromSymbol} to{" "}
-                    {message.action.toSymbol}
-                  </p>
-                  <p className="mt-1 text-xs text-emerald-100/80">
-                    Expected output: {message.action.expectedOut} {message.action.toSymbol}
-                  </p>
-                  <p className="mt-2 text-[11px] text-emerald-100/75">
-                    Execution is auto-simulated and reflected in activity.
-                  </p>
-                </div>
-              ) : null}
+            <form onSubmit={handleSubmit} className="flex gap-2">
+              <input
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder="Ask Solana questions or type: Swap 0.1 SOL to USDC"
+                className="w-full border border-white/15 bg-black px-3 py-2 text-xs font-semibold text-white placeholder:text-white/50 focus:outline-none"
+              />
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="border border-indigo-400/60 bg-indigo-500/15 px-3 py-2 text-xs font-semibold text-indigo-100 disabled:opacity-60"
+              >
+                {isSubmitting ? "..." : "Send"}
+              </button>
+            </form>
+
+            <div className="mt-2 border border-white/10 bg-black p-3">
+              <p className="text-[10px] uppercase tracking-[0.15em] text-white/45">Recent Swap Activity</p>
+              <div className="mt-2 space-y-1">
+                {swapHistory.length === 0 ? (
+                  <p className="text-[11px] text-white/50">No swaps yet.</p>
+                ) : (
+                  swapHistory.slice(0, 5).map((item) => (
+                    <p key={item.id} className="text-[11px] text-white/80">
+                      {item.amount} {item.fromSymbol} → {item.toSymbol} [{item.status}]
+                    </p>
+                  ))
+                )}
+              </div>
             </div>
           </div>
-        ))}
-      </div>
-
-      <div className="mt-3 space-y-2">
-        {liveAgentState ? (
-          <div className={`rounded-lg border px-3 py-2 text-xs ${liveAgentState.colorClass}`}>
-            {liveAgentState.agentName} thinking... {liveAgentState.task}
-          </div>
-        ) : null}
-
-        <div className="flex flex-wrap gap-2">
-          {STARTER_PROMPTS.map((item) => (
-            <button
-              key={item}
-              onClick={() => {
-                void submitPrompt(item);
-              }}
-              className="rounded-md border border-white/10 bg-[#0d1324] px-2 py-1 text-xs text-white/80"
-            >
-              {item}
-            </button>
-          ))}
-        </div>
-
-        <form onSubmit={handleSubmit} className="flex gap-2">
-          <input
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            placeholder="Ask Solana questions or type: Swap 0.1 SOL to USDC"
-            className="w-full rounded-lg border border-white/15 bg-[#0d1324] px-3 py-2 text-sm text-white/90 placeholder:text-white/40 focus:outline-none"
-          />
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="rounded-lg border border-indigo-400/60 bg-indigo-500/20 px-3 py-2 text-sm text-indigo-100 disabled:opacity-60"
-          >
-            {isSubmitting ? "..." : "Send"}
-          </button>
-        </form>
-      </div>
-
-      <div className="mt-4 rounded-xl border border-white/10 bg-[#0b1222] p-3">
-        <p className="text-[11px] uppercase tracking-[0.15em] text-white/45">Recent Swap Activity</p>
-        <div className="mt-2 space-y-1">
-          {swapHistory.length === 0 ? (
-            <p className="text-xs text-white/50">No swaps yet.</p>
-          ) : (
-            swapHistory.slice(0, 5).map((item) => (
-              <p key={item.id} className="text-xs text-white/80">
-                {item.amount} {item.fromSymbol} → {item.toSymbol} [{item.status}]
-              </p>
-            ))
-          )}
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }

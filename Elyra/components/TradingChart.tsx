@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createChart,
   CandlestickSeries,
@@ -226,6 +226,40 @@ export default function TradingChart({
 
   const [initialChartData] = useState<CandleData[]>(() => data ?? generateDemoData());
   const chartData = data ?? initialChartData;
+  const displayedData = useMemo(() => {
+    if (interval === "1h" || interval === "1m") {
+      return chartData;
+    }
+
+    const bucketSeconds = interval === "4h" ? 4 * 60 * 60 : 24 * 60 * 60;
+    const grouped = new Map<number, CandleData[]>();
+
+    for (const candle of chartData) {
+      const bucket = Math.floor(Number(candle.time) / bucketSeconds) * bucketSeconds;
+      const existing = grouped.get(bucket) ?? [];
+      existing.push(candle);
+      grouped.set(bucket, existing);
+    }
+
+    return Array.from(grouped.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([bucket, candles]) => {
+        const first = candles[0];
+        const last = candles[candles.length - 1];
+        const high = candles.reduce((max, item) => Math.max(max, item.high), first.high);
+        const low = candles.reduce((min, item) => Math.min(min, item.low), first.low);
+        const volume = candles.reduce((sum, item) => sum + (item.volume ?? 0), 0);
+
+        return {
+          time: bucket as CandleData["time"],
+          open: first.open,
+          high,
+          low,
+          close: last.close,
+          volume,
+        };
+      });
+  }, [chartData, interval]);
 
   useEffect(() => {
     if (!chartContainerRef.current || !volumeContainerRef.current) return;
@@ -261,7 +295,13 @@ export default function TradingChart({
         rightOffset: 8,
         tickMarkFormatter: (time: number) => {
           const d = new Date(time * 1000);
-          return `${d.getDate()}`;
+          if (interval === "1m") {
+            return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+          }
+          if (interval === "1h") {
+            return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit" });
+          }
+          return d.toLocaleString([], { month: "short", day: "numeric" });
         },
       },
       handleScroll: true,
@@ -279,13 +319,13 @@ export default function TradingChart({
     });
 
     candleSeries.setData(
-      initialChartData.map(({ time, open, high, low, close }) => ({
+      displayedData.map(({ time, open, high, low, close }) => ({
         time, open, high, low, close,
       }))
     );
 
     // Price line at current price
-    const lastCandle = initialChartData[initialChartData.length - 1];
+    const lastCandle = displayedData[displayedData.length - 1];
     candleSeries.createPriceLine({
       price: lastCandle.close,
       color: lastCandle.close >= lastCandle.open ? TV_COLORS.up : TV_COLORS.down,
@@ -359,7 +399,7 @@ export default function TradingChart({
     });
 
     volSeries.setData(
-      initialChartData
+      displayedData
         .filter((d) => d.volume !== undefined)
         .map(({ time, open, close, volume }) => ({
           time,
@@ -398,34 +438,41 @@ export default function TradingChart({
       chart.remove();
       volChart.remove();
     };
-  }, [initialChartData]);
+  }, [displayedData, interval]);
 
   // Update data when prop changes
   useEffect(() => {
-    if (data && candleSeriesRef.current && volumeSeriesRef.current) {
+    if (candleSeriesRef.current && volumeSeriesRef.current) {
       candleSeriesRef.current.setData(
-        data.map(({ time, open, high, low, close }) => ({ time, open, high, low, close }))
+        displayedData.map(({ time, open, high, low, close }) => ({
+          time,
+          open,
+          high,
+          low,
+          close,
+        })),
       );
       volumeSeriesRef.current.setData(
-        data
+        displayedData
           .filter((d) => d.volume !== undefined)
           .map(({ time, open, close, volume }) => ({
-            time, value: volume!,
+            time,
+            value: volume!,
             color: close >= open ? TV_COLORS.up : TV_COLORS.down,
-          }))
+          })),
       );
       chartRef.current?.timeScale().fitContent();
       volumeChartRef.current?.timeScale().fitContent();
     }
-  }, [data]);
+  }, [displayedData]);
 
   const ohlc = hoverData ?? {
-    open: chartData[chartData.length - 1].open,
-    high: chartData[chartData.length - 1].high,
-    low: chartData[chartData.length - 1].low,
-    close: chartData[chartData.length - 1].close,
-    change: ((chartData[chartData.length - 1].close - chartData[chartData.length - 1].open) /
-      chartData[chartData.length - 1].open) * 100,
+    open: displayedData[displayedData.length - 1].open,
+    high: displayedData[displayedData.length - 1].high,
+    low: displayedData[displayedData.length - 1].low,
+    close: displayedData[displayedData.length - 1].close,
+    change: ((displayedData[displayedData.length - 1].close - displayedData[displayedData.length - 1].open) /
+      displayedData[displayedData.length - 1].open) * 100,
   };
 
   const isUp = tokenInfo.priceChange >= 0;
@@ -444,8 +491,8 @@ export default function TradingChart({
           display: flex;
           flex-direction: column;
           width: 100%;
-          height: 100vh;
-          min-height: 600px;
+          height: 100%;
+          min-height: 0;
           overflow: hidden;
         }
 
@@ -456,7 +503,7 @@ export default function TradingChart({
           gap: 0;
           background: ${TV_COLORS.panelBg};
           border-bottom: 1px solid ${TV_COLORS.border};
-          height: 56px;
+          height: 50px;
           flex-shrink: 0;
           padding: 0 16px 0 0;
           overflow: hidden;
@@ -514,7 +561,7 @@ export default function TradingChart({
           gap: 0;
           background: ${TV_COLORS.panelBg};
           border-bottom: 1px solid ${TV_COLORS.border};
-          height: 44px;
+          height: 40px;
           flex-shrink: 0;
           padding: 0 12px;
         }
@@ -600,6 +647,11 @@ export default function TradingChart({
         .tc-vol-label { font-size: 12px; color: ${TV_COLORS.textMuted}; }
         .tc-vol-val { font-family: 'DM Mono', monospace; font-size: 12px; color: ${TV_COLORS.down}; }
         .tc-vol-wrap { height: 160px; flex-shrink: 0; overflow: hidden; }
+        
+        @media (max-width: 1280px) {
+          .tc-vol-wrap { height: 120px; }
+          .tc-header { height: 46px; }
+        }
 
         /* ── Bottom bar ── */
         .tc-bottom-bar {
@@ -775,7 +827,7 @@ export default function TradingChart({
             <div className="tc-vol-label-row">
               <span className="tc-vol-label">Volume</span>
               <span className="tc-vol-val">
-                {((chartData[chartData.length - 1].volume ?? 0) / 1_000_000).toFixed(2)}M
+                {((displayedData[displayedData.length - 1].volume ?? 0) / 1_000_000).toFixed(2)}M
               </span>
             </div>
 

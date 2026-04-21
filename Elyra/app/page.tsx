@@ -3,6 +3,8 @@
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AuthState, ClientState, useTurnkey } from "@turnkey/react-wallet-kit";
+import TradingTerminal, { type TokenInfo } from "../components/TradingTerminal";
+import { tradingDummyToken } from "@/lib/tradeDummyData";
 import {
   Connection,
   LAMPORTS_PER_SOL,
@@ -18,6 +20,10 @@ import {
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import { Buffer } from "buffer";
+import TradingAssistant, {
+  type SwapAction,
+  type SwapHistoryItem,
+} from "@/components/TradingAssistant";
 
 type TokenBalance = {
   symbol: string;
@@ -69,7 +75,11 @@ export default function Home() {
   const [statusMessage, setStatusMessage] = useState("");
   const [hideBalances, setHideBalances] = useState(false);
   const [activeRpcUrl, setActiveRpcUrl] = useState(rpcUrl);
+  const [blockedRpcUrls, setBlockedRpcUrls] = useState<string[]>([]);
   const [lastBalanceFetchAt, setLastBalanceFetchAt] = useState<number>(0);
+  const [solPrice, setSolPrice] = useState<number>(tradingDummyToken.price);
+  const [solPriceChange, setSolPriceChange] = useState<number>(tradingDummyToken.priceChange);
+  const [swapHistory, setSwapHistory] = useState<SwapHistoryItem[]>([]);
 
   const isReady = clientState === ClientState.Ready;
   const isAuthenticated = authState === AuthState.Authenticated;
@@ -90,6 +100,15 @@ export default function Home() {
     return undefined;
   }, [wallets]);
 
+  const liveTokenInfo = useMemo<TokenInfo>(
+    () => ({
+      ...tradingDummyToken,
+      price: solPrice,
+      priceChange: solPriceChange,
+    }),
+    [solPrice, solPriceChange],
+  );
+
   const refreshBalances = useCallback(async () => {
     if (!solAddress) {
       return;
@@ -100,9 +119,12 @@ export default function Home() {
 
     try {
       const owner = new PublicKey(solAddress);
-      const rpcCandidates = Array.from(new Set([rpcUrl, ...RPC_FALLBACK_URLS]));
+      const rpcCandidates = Array.from(
+        new Set([rpcUrl, ...RPC_FALLBACK_URLS].filter((url) => !blockedRpcUrls.includes(url))),
+      );
       let lastError: unknown;
       let sawForbiddenError = false;
+      let sawRateLimitError = false;
 
       for (const candidate of rpcCandidates) {
         try {
@@ -139,33 +161,48 @@ export default function Home() {
           const errorText = String(error);
           if (errorText.includes("403")) {
             sawForbiddenError = true;
+            setBlockedRpcUrls((previous) =>
+              previous.includes(candidate) ? previous : [...previous, candidate],
+            );
+          }
+          if (errorText.includes("429")) {
+            sawRateLimitError = true;
           }
           lastError = error;
         }
       }
 
-      if (sawForbiddenError) {
+      if (sawForbiddenError && rpcCandidates.length > 1) {
         setStatusMessage(
           "Primary RPC access is forbidden (403). Switched to fallback RPCs where possible.",
         );
       }
+
+      if (sawRateLimitError) {
+        setStatusMessage(
+          "RPC is rate-limited (429). Retrying with fallback endpoints automatically.",
+        );
+      }
+
       throw lastError;
     } catch (error) {
       console.error("Failed to fetch balances:", error);
       const errorText = String(error);
       if (errorText.includes("403")) {
         setStatusMessage(
-          "RPC key is blocked/invalid (403). Update NEXT_PUBLIC_SOLANA_RPC_URL or use a valid mainnet key.",
+          "RPC key is blocked/invalid (403). Add a valid NEXT_PUBLIC_SOLANA_RPC_URL key or keep public fallback RPCs.",
         );
-      } else {
+      } else if (errorText.includes("429")) {
         setStatusMessage(
           "Balance fetch is rate-limited (429). Try refresh shortly or switch RPC endpoint.",
         );
+      } else {
+        setStatusMessage("Failed to fetch balances. Please retry.");
       }
     } finally {
       setIsFetchingBalances(false);
     }
-  }, [rpcUrl, solAddress]);
+  }, [blockedRpcUrls, rpcUrl, solAddress]);
 
   useEffect(() => {
     if (!walletMenuOpen || !isAuthenticated || !solAddress) {
@@ -178,6 +215,46 @@ export default function Home() {
       void refreshBalances();
     });
   }, [walletMenuOpen, isAuthenticated, solAddress, lastBalanceFetchAt, refreshBalances]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchSolPrice = async () => {
+      try {
+        const response = await fetch("/api/pyth/sol-price");
+        if (!response.ok) {
+          throw new Error(`Price feed failed with ${response.status}`);
+        }
+
+        const payload = (await response.json()) as {
+          price?: number;
+          timestampUs?: string;
+        };
+        const nextPrice = payload.price;
+
+        if (!cancelled && typeof nextPrice === "number" && Number.isFinite(nextPrice)) {
+          setSolPrice((previousPrice) => {
+            const base = previousPrice <= 0 ? nextPrice : previousPrice;
+            const nextChangePct = ((nextPrice - base) / base) * 100;
+            setSolPriceChange(nextChangePct);
+            return nextPrice;
+          });
+        }
+      } catch (error) {
+        console.error("Failed to fetch SOL price feed:", error);
+      }
+    };
+
+    void fetchSolPrice();
+    const intervalId = window.setInterval(() => {
+      void fetchSolPrice();
+    }, 2_500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   const handleCreateSolWallet = async () => {
     if (!isAuthenticated) {
@@ -291,6 +368,81 @@ export default function Home() {
     }
   };
 
+  const executeSwapFromChat = useCallback(
+    async (action: SwapAction) => {
+      if (!solAddress) {
+        return { error: "No Solana wallet found." };
+      }
+
+      const historyId = crypto.randomUUID();
+      setSwapHistory((previous) => [
+        {
+          id: historyId,
+          fromSymbol: action.fromSymbol,
+          toSymbol: action.toSymbol,
+          amount: action.amount,
+          status: "pending",
+          createdAt: Date.now(),
+        },
+        ...previous,
+      ]);
+
+      try {
+        const versionedTx = VersionedTransaction.deserialize(
+          Buffer.from(action.swapTransaction, "base64"),
+        );
+        const recentBlockhash = versionedTx.message.recentBlockhash;
+
+        const result = await handleSendTransaction({
+          transaction: {
+            unsignedTransaction: action.swapTransaction,
+            signWith: solAddress,
+            caip2: SOLANA_MAINNET_CAIP2,
+            recentBlockhash,
+          },
+        });
+
+        const signature =
+          typeof result === "object" && result !== null && "transactionId" in result
+            ? String(
+                (result as {
+                  transactionId?: string;
+                }).transactionId ?? "",
+              )
+            : undefined;
+
+        setSwapHistory((previous) =>
+          previous.map((item) =>
+            item.id === historyId
+              ? {
+                  ...item,
+                  status: "confirmed",
+                  signature,
+                }
+              : item,
+          ),
+        );
+        await refreshBalances();
+        return { signature };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown swap error";
+        setSwapHistory((previous) =>
+          previous.map((item) =>
+            item.id === historyId
+              ? {
+                  ...item,
+                  status: "failed",
+                  error: errorMessage,
+                }
+              : item,
+          ),
+        );
+        return { error: errorMessage };
+      }
+    },
+    [handleSendTransaction, refreshBalances, solAddress],
+  );
+
   if (!isReady) {
     return (
       <div className="min-h-screen bg-[#05070f] text-white grid place-items-center">
@@ -300,21 +452,35 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-[#05070f] text-white">
-      <nav className="border-b border-white/10 px-5 py-4">
-        <div className="mx-auto flex w-full max-w-6xl items-center justify-between">
+    <div className="min-h-screen bg-[#070b14] text-white">
+      <nav className="border-b border-white/10 bg-[#0b1020] px-4 py-4">
+        <div className="mx-auto flex w-full max-w-[1800px] items-center justify-between">
           <div className="flex items-center gap-3">
-            <Image src="/logo.png" alt="Elyra logo" width={42} height={42} priority />
-            <span className="text-lg font-semibold tracking-wide">ELYRA</span>
+            <Image src="/logo.png" alt="Elyra logo" width={40} height={40} priority />
+            <span className="text-xl font-semibold tracking-wide">Elyra</span>
           </div>
 
           <div className="flex items-center gap-3">
+            <div className="hidden items-center gap-2 lg:flex">
+              <span className="rounded-md border border-white/15 bg-[#0f1728] px-2 py-1 text-[10px] text-white/80">
+                Free Credits 7
+              </span>
+              <button className="rounded-md border border-white/20 bg-[#121a2d] px-2 py-1 text-[10px]">
+                Unlock
+              </button>
+              <span className="rounded-md border border-white/20 bg-[#121a2d] px-2 py-1 text-[10px]">
+                ${solPrice.toFixed(2)}
+              </span>
+              <button className="rounded-md border border-white/20 bg-[#121a2d] px-2 py-1 text-[10px]">
+                Deposit
+              </button>
+            </div>
             {!isAuthenticated ? (
               <button
                 onClick={() => {
                   void handleLogin();
                 }}
-                className="rounded-lg border border-indigo-400/60 px-4 py-2 text-sm font-medium text-indigo-200 hover:bg-indigo-500/10"
+                className="rounded-lg border border-indigo-400/60 bg-indigo-500/10 px-4 py-2 text-sm font-medium text-indigo-200 hover:bg-indigo-500/20"
               >
                 Login with Turnkey (Google enabled)
               </button>
@@ -333,7 +499,7 @@ export default function Home() {
                   </button>
 
                   {walletMenuOpen ? (
-                    <div className="absolute right-0 mt-2 w-80 rounded-xl border border-white/10 bg-[#0b1020] p-4 shadow-xl">
+                    <div className="absolute right-0 mt-2 w-80 rounded-xl border border-white/10 bg-[#0f1629] p-4 shadow-xl">
                       <p className="mb-3 text-xs text-white/60">
                         Token balances (mainnet)
                       </p>
@@ -384,7 +550,7 @@ export default function Home() {
                     {user?.userName?.[0]?.toUpperCase() ?? "P"}
                   </button>
                   {profileMenuOpen ? (
-                    <div className="absolute right-0 mt-2 w-80 rounded-xl border border-white/10 bg-[#0b1020] p-4 shadow-xl">
+                    <div className="absolute right-0 mt-2 w-80 rounded-xl border border-white/10 bg-[#0f1629] p-4 shadow-xl">
                       <p className="text-xs text-white/60">Profile</p>
                       <p className="mt-2 text-sm text-white/80">{user?.userName ?? "Turnkey user"}</p>
                       <p className="mt-3 text-xs text-white/60">Solana address</p>
@@ -406,28 +572,22 @@ export default function Home() {
             )}
           </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/8 px-5 transition-colors hover:border-transparent hover:bg-black/4 dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
       </nav>
+
+      <main className="mx-auto grid w-full max-w-[1800px] grid-cols-1 gap-0 p-3 xl:grid-cols-10">
+        <section className="overflow-hidden rounded-l-xl border border-white/10 bg-[#0b0f19] xl:col-span-7 xl:h-[calc(100vh-96px)]">
+          <TradingTerminal tokenInfo={liveTokenInfo} />
+        </section>
+
+        <aside className="rounded-r-xl border border-l-0 border-white/10 bg-[#090d1a] p-4 xl:col-span-3 xl:h-[calc(100vh-96px)]">
+          <TradingAssistant
+            solPrice={solPrice}
+            walletAddress={solAddress}
+            onExecuteSwap={executeSwapFromChat}
+            swapHistory={swapHistory}
+          />
+        </aside>
+      </main>
 
       {actionModalOpen && isAuthenticated ? (
         <div

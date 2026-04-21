@@ -9,6 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "@turnkey/react-wallet-kit": "^1.11.1",
     "next": "16.2.4",
     "react": "19.2.4",
     "react-dom": "19.2.4"

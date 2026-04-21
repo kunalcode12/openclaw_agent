@@ -577,10 +577,8 @@ export default function TradingAssistant({
     <div className="flex h-full max-h-full min-h-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-black text-white">
       <div className="mb-0 flex shrink-0 items-center justify-between border-b border-white/[0.06] px-3 py-2">
         <div>
-          <div className="text-[13px] font-bold tracking-tight text-white">Copilot</div>
-          <p className="text-[10px] font-medium text-white/40">
-            5-agent swarm · Gemini · Jupiter
-          </p>
+          <div className="text-[13px] font-bold tracking-tight text-white">Elyra</div>
+         
         </div>
         <div className="flex items-center gap-1 text-white/55">
           <button

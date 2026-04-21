@@ -290,12 +290,31 @@ export default function Home() {
 
   useEffect(() => {
     let cancelled = false;
+    let inFlight: AbortController | null = null;
 
     const fetchSolPrice = async () => {
+      inFlight?.abort();
+      if (cancelled) {
+        return;
+      }
+      const ac = new AbortController();
+      inFlight = ac;
+
       try {
-        const response = await fetch("/api/pyth/sol-price");
+        const response = await fetch("/api/pyth/sol-price", {
+          signal: ac.signal,
+          cache: "no-store",
+        });
         if (!response.ok) {
-          throw new Error(`Price feed failed with ${response.status}`);
+          const body = await response.text();
+          let detail = body;
+          try {
+            const j = JSON.parse(body) as { error?: string };
+            if (j.error) detail = j.error;
+          } catch {
+            /* ignore */
+          }
+          throw new Error(`Price feed ${response.status}: ${detail.slice(0, 120)}`);
         }
 
         const payload = (await response.json()) as {
@@ -317,7 +336,25 @@ export default function Home() {
           });
         }
       } catch (error) {
-        console.error("Failed to fetch SOL price feed:", error);
+        if (cancelled || ac.signal.aborted) {
+          return;
+        }
+        const isAbort =
+          error instanceof DOMException && error.name === "AbortError";
+        const msg = error instanceof Error ? error.message : String(error);
+        const isNetwork =
+          msg === "Failed to fetch" ||
+          msg.includes("NetworkError") ||
+          msg.includes("Load failed");
+        if (isAbort) {
+          return;
+        }
+        if (isNetwork) {
+          // Dev: extensions/adblock/offline often surface as TypeError: Failed to fetch
+          console.debug("[elyra] SOL price unreachable, keeping last price:", msg);
+          return;
+        }
+        console.warn("SOL price feed error:", msg);
       }
     };
 
@@ -328,6 +365,7 @@ export default function Home() {
 
     return () => {
       cancelled = true;
+      inFlight?.abort();
       window.clearInterval(intervalId);
     };
   }, []);

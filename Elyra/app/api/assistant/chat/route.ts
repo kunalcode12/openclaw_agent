@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 
 const PRIMARY_GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-pro";
 const GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
-const JUPITER_QUOTE_URL = "https://quote-api.jup.ag/v6/quote";
-const JUPITER_SWAP_URL = "https://quote-api.jup.ag/v6/swap";
+const JUPITER_QUOTE_BASE_URLS = [
+  "https://quote-api.jup.ag/v6/quote",
+  "https://lite-api.jup.ag/swap/v1/quote",
+];
 const GEMINI_MAX_RETRIES = 4;
 
 const TOKEN_MAP: Record<string, { symbol: string; mint: string; decimals: number }> = {
@@ -39,8 +41,13 @@ type AssistantRequest = {
 };
 
 function parseSwapIntent(prompt: string, solBalance?: number) {
+  const normalizedPrompt = prompt
+    .trim()
+    .replace(/\s+with\s+/gi, " to ")
+    .replace(/\s+into\s+/gi, " to ");
+
   const percentMatcher = /swap\s+([\d.]+)\s*%\s*(?:of\s+)?([a-zA-Z]+)\s+(?:to|for)\s+([a-zA-Z]+)/i.exec(
-    prompt.trim(),
+    normalizedPrompt,
   );
   if (percentMatcher) {
     const percent = Number(percentMatcher[1]);
@@ -63,7 +70,9 @@ function parseSwapIntent(prompt: string, solBalance?: number) {
     }
   }
 
-  const matcher = /swap\s+([\d.]+)\s+([a-zA-Z]+)\s+(?:to|for)\s+([a-zA-Z]+)/i.exec(prompt.trim());
+  const matcher = /swap\s+([\d.]+)\s+(?:of\s+)?([a-zA-Z]+)\s+(?:to|for)\s+([a-zA-Z]+)/i.exec(
+    normalizedPrompt,
+  );
   if (!matcher) {
     return null;
   }
@@ -83,7 +92,7 @@ function parseSwapIntent(prompt: string, solBalance?: number) {
 }
 
 async function createJupiterSwap(
-  walletAddress: string,
+  walletAddress: string | null | undefined,
   amount: number,
   fromSymbol: string,
   toSymbol: string,
@@ -93,50 +102,53 @@ async function createJupiterSwap(
   const amountInBaseUnits = Math.round(amount * 10 ** fromToken.decimals);
   const slippageBps = 50;
 
-  const quoteUrl = `${JUPITER_QUOTE_URL}?inputMint=${fromToken.mint}&outputMint=${toToken.mint}&amount=${amountInBaseUnits}&slippageBps=${slippageBps}`;
-  const quoteResponse = await fetch(quoteUrl, { cache: "no-store" });
-  if (!quoteResponse.ok) {
-    throw new Error(`Jupiter quote failed with ${quoteResponse.status}`);
-  }
+  const jupiterApiKey = process.env.JUPITER_API_KEY;
+  const quoteHeaders = {
+    ...(jupiterApiKey ? { "x-api-key": jupiterApiKey } : {}),
+  };
 
-  const quotePayload = (await quoteResponse.json()) as {
+  let quotePayload: {
     outAmount?: string;
     [key: string]: unknown;
-  };
+  } | null = null;
+  let lastQuoteError = "Jupiter quote request failed";
+
+  for (const baseUrl of JUPITER_QUOTE_BASE_URLS) {
+    try {
+      const quoteUrl = `${baseUrl}?inputMint=${fromToken.mint}&outputMint=${toToken.mint}&amount=${amountInBaseUnits}&slippageBps=${slippageBps}`;
+      const timeout = AbortSignal.timeout(8_000);
+      const quoteResponse = await fetch(quoteUrl, {
+        cache: "no-store",
+        headers: quoteHeaders,
+        signal: timeout,
+      });
+
+      if (!quoteResponse.ok) {
+        const body = await quoteResponse.text();
+        lastQuoteError = `Jupiter quote failed (${quoteResponse.status}) from ${baseUrl}: ${body}`;
+        continue;
+      }
+
+      quotePayload = (await quoteResponse.json()) as {
+        outAmount?: string;
+        [key: string]: unknown;
+      };
+      break;
+    } catch (error) {
+      lastQuoteError = `${baseUrl} fetch error: ${error instanceof Error ? error.message : "Unknown error"}`;
+    }
+  }
+
+  if (!quotePayload) {
+    throw new Error(lastQuoteError);
+  }
+
   if (!quotePayload.outAmount) {
     throw new Error("Jupiter quote missing outAmount");
   }
 
-  const jupiterApiKey = process.env.JUPITER_API_KEY;
-  const swapResponse = await fetch(JUPITER_SWAP_URL, {
-    method: "POST",
-    cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-      ...(jupiterApiKey ? { "x-api-key": jupiterApiKey } : {}),
-    },
-    body: JSON.stringify({
-      quoteResponse: quotePayload,
-      userPublicKey: walletAddress,
-      wrapAndUnwrapSol: true,
-      dynamicComputeUnitLimit: true,
-      prioritizationFeeLamports: "auto",
-    }),
-  });
-
-  if (!swapResponse.ok) {
-    throw new Error(`Jupiter swap tx build failed with ${swapResponse.status}`);
-  }
-
-  const swapPayload = (await swapResponse.json()) as {
-    swapTransaction?: string;
-  };
-
-  if (!swapPayload.swapTransaction) {
-    throw new Error("Jupiter swap response missing transaction");
-  }
-
   const expectedOut = Number(quotePayload.outAmount) / 10 ** toToken.decimals;
+  const jupiterSwapUrl = `https://jup.ag/swap/${fromSymbol}-${toSymbol}`;
   return {
     kind: "swap" as const,
     fromSymbol,
@@ -146,7 +158,8 @@ async function createJupiterSwap(
     amount: amount.toString(),
     expectedOut: expectedOut.toFixed(6),
     slippageBps,
-    swapTransaction: swapPayload.swapTransaction,
+    jupiterSwapUrl,
+    userPublicKey: walletAddress ?? undefined,
   };
 }
 
@@ -190,8 +203,11 @@ async function askGemini(prompt: string, solPrice?: number, swapHistory?: Assist
               "You are a production Solana trading assistant and action planner. Reply in JSON only with keys: reply (string), suggestions (string[]), strategyNotes (string[]), agentAction (object|null).\n" +
               "If the user requests a swap, set agentAction={\"type\":\"swap\",\"amount\":\"<number>\",\"fromSymbol\":\"SOL|USDC|BONK\",\"toSymbol\":\"SOL|USDC|BONK\"}. For unclear amounts, set agentAction=null and ask one clarifying question.\n" +
               "When discussing backtests, prefer recent rolling windows (e.g., last 3/6/12 months) unless the user asks for a specific historical date range.\n" +
-              "Write a slightly longer, technical reply (6-10 sentences) with concrete plan and execution detail. End with what to do next in actionable terms.\n" +
+              "Write in institutional hedge-fund memo style.\n" +
+              "Structure reply using these labels on separate lines: 'Market Regime:', 'Model View:', 'Execution Plan:', 'Risk Controls:', 'Next Actions:'.\n" +
+              "Write a technical reply (8-14 sentences) with concrete assumptions, constraints, and implementation detail.\n" +
               "In strategyNotes, provide 3-5 technical bullets (entry logic, stop, invalidation, sizing, execution).\n" +
+              "Keep language crisp and premium; avoid repetitive filler like 'Acknowledged'.\n" +
               `Context:\n${contextBlock}\n\n` +
               `User prompt: ${prompt}`,
           },
@@ -334,13 +350,22 @@ export async function POST(request: Request) {
       }
     }
 
-    if (resolvedSwapIntent && body.walletAddress) {
-      action = await createJupiterSwap(
-        body.walletAddress,
-        resolvedSwapIntent.amount,
-        resolvedSwapIntent.fromSymbol,
-        resolvedSwapIntent.toSymbol,
-      );
+    if (resolvedSwapIntent) {
+      try {
+        action = await createJupiterSwap(
+          body.walletAddress,
+          resolvedSwapIntent.amount,
+          resolvedSwapIntent.fromSymbol,
+          resolvedSwapIntent.toSymbol,
+        );
+      } catch (swapError) {
+        const swapErrorMessage =
+          swapError instanceof Error ? swapError.message : "Unknown Jupiter quote error";
+        ai = {
+          ...ai,
+          reply: `${ai.reply}\n\nI understood your swap intent, but Jupiter quote fetch failed right now (${swapErrorMessage}). Please retry in a few seconds.`,
+        };
+      }
     }
 
     return NextResponse.json({

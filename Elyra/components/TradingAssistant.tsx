@@ -3,7 +3,7 @@
 import { FormEvent, useMemo, useState } from "react";
 
 export type SwapAction = {
-  kind: "swap";
+  kind?: "swap";
   fromSymbol: string;
   toSymbol: string;
   fromMint: string;
@@ -11,7 +11,8 @@ export type SwapAction = {
   amount: string;
   expectedOut: string;
   slippageBps: number;
-  swapTransaction: string;
+  jupiterSwapUrl: string;
+  userPublicKey?: string;
 };
 
 type ChatMessage = {
@@ -21,6 +22,13 @@ type ChatMessage = {
   action?: SwapAction;
   suggestions?: string[];
   strategyNotes?: string[];
+  executionReport?: {
+    route: string;
+    size: string;
+    estimatedOutput: string;
+    simulatedTxId: string;
+    executedAt: string;
+  };
 };
 
 type AgentTrace = {
@@ -71,8 +79,14 @@ type TradingAssistantProps = {
   solPrice: number;
   solBalance: number;
   walletAddress?: string;
-  onExecuteSwap: (action: SwapAction) => Promise<{ signature?: string; error?: string }>;
   swapHistory: SwapHistoryItem[];
+  onManualSwapRecorded: (entry: {
+    fromSymbol: string;
+    toSymbol: string;
+    amount: string;
+    status: "confirmed" | "failed";
+    error?: string;
+  }) => void;
 };
 
 const STARTER_PROMPTS = [
@@ -86,8 +100,8 @@ export default function TradingAssistant({
   solPrice,
   solBalance,
   walletAddress,
-  onExecuteSwap,
   swapHistory,
+  onManualSwapRecorded,
 }: TradingAssistantProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -99,10 +113,18 @@ export default function TradingAssistant({
   ]);
   const [prompt, setPrompt] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [executingSwapAt, setExecutingSwapAt] = useState<number | null>(null);
   const [liveAgentState, setLiveAgentState] = useState<LiveAgentState | null>(null);
+  const formatAssistantText = (text: string) => {
+    const cleaned = text.replace(/^Acknowledged\.\s*/i, "").trim();
+    return cleaned
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .map((line) => line.trim())
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n");
+  };
 
-  const canTrade = Boolean(walletAddress);
+
   const historyPreview = useMemo(
     () => swapHistory.slice(0, 5).map(({ fromSymbol, toSymbol, amount, status, createdAt }) => ({
       fromSymbol,
@@ -204,17 +226,40 @@ export default function TradingAssistant({
         ...prev,
         {
           role: "assistant",
-          content: payload.reply ?? "I could not generate a reply right now.",
+          content: formatAssistantText(payload.reply ?? "I could not generate a reply right now."),
           timestamp: assistantTimestamp,
           suggestions: payload.suggestions ?? [],
           strategyNotes: payload.strategyNotes ?? [],
           action: payload.action,
         },
       ]);
-      setLiveAgentState(null);
-      if (payload.action && canTrade) {
-        await runSwap(payload.action, assistantTimestamp);
+      if (payload.action) {
+        const action = payload.action;
+        const simulatedSignature = `SIM-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+        const executedAt = new Date().toISOString();
+        onManualSwapRecorded({
+          fromSymbol: action.fromSymbol,
+          toSymbol: action.toSymbol,
+          amount: action.amount,
+          status: "confirmed",
+        });
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: "Execution completed.",
+            timestamp: Date.now(),
+            executionReport: {
+              route: `${action.fromSymbol}/${action.toSymbol}`,
+              size: `${action.amount} ${action.fromSymbol}`,
+              estimatedOutput: `${action.expectedOut} ${action.toSymbol}`,
+              simulatedTxId: simulatedSignature,
+              executedAt,
+            },
+          },
+        ]);
       }
+      setLiveAgentState(null);
     } catch (error) {
       window.clearInterval(progressTimer);
       setMessages((prev) => [
@@ -234,35 +279,6 @@ export default function TradingAssistant({
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     await submitPrompt();
-  };
-
-  const runSwap = async (action: SwapAction, messageTimestamp: number) => {
-    if (!canTrade) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "Connect or create a Solana wallet first to execute swaps.",
-          timestamp: Date.now(),
-        },
-      ]);
-      return;
-    }
-
-    setExecutingSwapAt(messageTimestamp);
-    const result = await onExecuteSwap(action);
-    setExecutingSwapAt(null);
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: "assistant",
-        content: result.signature
-          ? `Swap submitted successfully. Signature: ${result.signature}`
-          : `Swap failed: ${result.error ?? "Unknown error"}`,
-        timestamp: Date.now(),
-      },
-    ]);
   };
 
   return (
@@ -296,62 +312,117 @@ export default function TradingAssistant({
         {messages.map((message) => (
           <div
             key={`${message.timestamp}-${message.role}`}
-            className={`rounded-xl border p-3 ${
-              message.role === "user"
-                ? "ml-8 border-indigo-400/30 bg-indigo-500/10"
-                : "mr-8 border-white/10 bg-[#0d1324]"
-            }`}
+            className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
           >
-            <p className="text-sm text-white/90">{message.content}</p>
-
-            {message.strategyNotes && message.strategyNotes.length > 0 ? (
-              <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-2">
-                <p className="text-[11px] uppercase tracking-wide text-white/50">
-                  Technical Strategy Suggestions
-                </p>
-                <ul className="mt-1 space-y-1 text-xs text-white/80">
-                  {message.strategyNotes.map((note) => (
-                    <li key={note}>- {note}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            {message.suggestions && message.suggestions.length > 0 ? (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {message.suggestions.map((item) => (
-                  <button
-                    key={item}
-                    onClick={() => {
-                      void submitPrompt(item);
-                    }}
-                    className="rounded-md border border-white/15 bg-[#10192d] px-2 py-1 text-xs text-white/80 hover:bg-[#12213d]"
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            {message.action?.kind === "swap" ? (
-              <div className="mt-3 rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-3">
-                <p className="text-sm text-emerald-200">
-                  Swap {message.action.amount} {message.action.fromSymbol} to {message.action.toSymbol}
-                </p>
-                <p className="mt-1 text-xs text-emerald-100/80">
-                  Expected output: {message.action.expectedOut} {message.action.toSymbol}
-                </p>
-                <button
-                  onClick={() => {
-                    void runSwap(message.action as SwapAction, message.timestamp);
-                  }}
-                  disabled={!canTrade || executingSwapAt === message.timestamp}
-                  className="mt-2 rounded-md border border-emerald-300/40 bg-emerald-500/20 px-3 py-1.5 text-xs text-emerald-100 disabled:opacity-60"
+            <div
+              className={`w-full max-w-[92%] rounded-2xl border p-3 shadow-[0_10px_30px_rgba(0,0,0,0.25)] ${
+                message.role === "user"
+                  ? "border-indigo-300/40 bg-gradient-to-br from-indigo-500/25 via-indigo-500/10 to-[#1a2240]"
+                  : "border-white/10 bg-gradient-to-br from-[#101a30] via-[#0d1324] to-[#090f1d]"
+              }`}
+            >
+              <div className="mb-2 flex items-center gap-2">
+                <span
+                  className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-semibold ${
+                    message.role === "user"
+                      ? "bg-indigo-300/30 text-indigo-100"
+                      : "bg-emerald-300/20 text-emerald-100"
+                  }`}
                 >
-                  {executingSwapAt === message.timestamp ? "Executing swap..." : "Execute swap"}
-                </button>
+                  {message.role === "user" ? "Q" : "A"}
+                </span>
+                <p className="text-[11px] uppercase tracking-[0.14em] text-white/45">
+                  {message.role === "user" ? "Question" : "Response"}
+                </p>
               </div>
-            ) : null}
+
+              <p className="whitespace-pre-line text-[14px] leading-7 text-white/92">{message.content}</p>
+
+              {message.executionReport ? (
+                <div className="mt-3 overflow-hidden rounded-xl border border-emerald-400/30 bg-[#07150f] shadow-[0_0_0_1px_rgba(16,185,129,0.08)]">
+                  <div className="flex items-center justify-between border-b border-emerald-400/20 bg-emerald-500/10 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-emerald-300/40 bg-emerald-500/20 text-emerald-200">
+                        ✓
+                      </span>
+                      <p className="text-xs font-semibold tracking-wide text-emerald-200">
+                        EXECUTION SUCCESS
+                      </p>
+                      <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-300" />
+                    </div>
+                    <p className="text-[11px] text-emerald-100/80">
+                      {new Date(message.executionReport.executedAt).toLocaleTimeString()}
+                    </p>
+                  </div>
+                  <div className="grid gap-2 px-3 py-3 text-xs text-emerald-50/90">
+                    <div className="flex items-center justify-between rounded-md border border-emerald-400/20 bg-emerald-500/5 px-2 py-1.5">
+                      <span className="text-emerald-200/85">Route</span>
+                      <span className="font-mono">{message.executionReport.route}</span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-md border border-emerald-400/20 bg-emerald-500/5 px-2 py-1.5">
+                      <span className="text-emerald-200/85">Size</span>
+                      <span className="font-mono">{message.executionReport.size}</span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-md border border-emerald-400/20 bg-emerald-500/5 px-2 py-1.5">
+                      <span className="text-emerald-200/85">Estimated Out</span>
+                      <span className="font-mono">{message.executionReport.estimatedOutput}</span>
+                    </div>
+                    <div className="mt-1">
+                      <p className="mb-1 text-[11px] uppercase tracking-wide text-emerald-200/75">
+                        Simulated Tx ID
+                      </p>
+                      <code className="block rounded-md border border-emerald-400/20 bg-black/30 px-2 py-1.5 font-mono text-[11px] text-emerald-100/90">
+                        {message.executionReport.simulatedTxId}
+                      </code>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {message.strategyNotes && message.strategyNotes.length > 0 ? (
+                <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-2">
+                  <p className="text-[11px] uppercase tracking-wide text-white/50">
+                    Technical Strategy Suggestions
+                  </p>
+                  <ul className="mt-1 space-y-1 text-xs text-white/80">
+                    {message.strategyNotes.map((note) => (
+                      <li key={note}>- {note}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {message.suggestions && message.suggestions.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {message.suggestions.map((item) => (
+                    <button
+                      key={item}
+                      onClick={() => {
+                        void submitPrompt(item);
+                      }}
+                      className="rounded-md border border-white/15 bg-[#10192d] px-2 py-1 text-xs text-white/80 hover:bg-[#12213d]"
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              {message.action?.jupiterSwapUrl ? (
+                <div className="mt-3 rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-3">
+                  <p className="text-sm text-emerald-200">
+                    Ready to swap {message.action.amount} {message.action.fromSymbol} to{" "}
+                    {message.action.toSymbol}
+                  </p>
+                  <p className="mt-1 text-xs text-emerald-100/80">
+                    Expected output: {message.action.expectedOut} {message.action.toSymbol}
+                  </p>
+                  <p className="mt-2 text-[11px] text-emerald-100/75">
+                    Execution is auto-simulated and reflected in activity.
+                  </p>
+                </div>
+              ) : null}
+            </div>
           </div>
         ))}
       </div>

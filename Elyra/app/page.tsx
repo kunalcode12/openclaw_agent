@@ -21,7 +21,6 @@ import {
 } from "@solana/spl-token";
 import { Buffer } from "buffer";
 import TradingAssistant, {
-  type SwapAction,
   type SwapHistoryItem,
 } from "@/components/TradingAssistant";
 
@@ -79,6 +78,7 @@ export default function Home() {
   ]);
   const [isFetchingBalances, setIsFetchingBalances] = useState(false);
   const [isSubmittingTx, setIsSubmittingTx] = useState(false);
+  const [isSolSendDisabled, setIsSolSendDisabled] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [hideBalances, setHideBalances] = useState(false);
   const [activeRpcUrl, setActiveRpcUrl] = useState(rpcUrl);
@@ -362,6 +362,14 @@ export default function Home() {
     setIsSubmittingTx(true);
     setStatusMessage("");
 
+    if (isSolSendDisabled) {
+      setIsSubmittingTx(false);
+      setStatusMessage(
+        "Turnkey Solana send is not enabled for this organization. Enable 'sol send transaction' in Turnkey settings.",
+      );
+      return;
+    }
+
     try {
       const owner = new PublicKey(activeAddress);
       const destination = new PublicKey(targetAddress);
@@ -433,6 +441,17 @@ export default function Home() {
       await refreshBalances();
     } catch (error) {
       console.error("Transaction failed:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (
+        errorMessage.toLowerCase().includes("sol send transaction feature is not enabled") ||
+        errorMessage.toLowerCase().includes("turnkey error 7")
+      ) {
+        setIsSolSendDisabled(true);
+        setStatusMessage(
+          "Turnkey Solana send is disabled for this organization. Please enable it in Turnkey before withdraw/transfer.",
+        );
+        return;
+      }
       setStatusMessage(
         `Transaction failed: ${error instanceof Error ? error.message : "Unknown error"}`,
       );
@@ -440,81 +459,6 @@ export default function Home() {
       setIsSubmittingTx(false);
     }
   };
-
-  const executeSwapFromChat = useCallback(
-    async (action: SwapAction) => {
-      if (!activeAddress) {
-        return { error: "No Solana wallet found." };
-      }
-
-      const historyId = crypto.randomUUID();
-      setSwapHistory((previous) => [
-        {
-          id: historyId,
-          fromSymbol: action.fromSymbol,
-          toSymbol: action.toSymbol,
-          amount: action.amount,
-          status: "pending",
-          createdAt: Date.now(),
-        },
-        ...previous,
-      ]);
-
-      try {
-        const versionedTx = VersionedTransaction.deserialize(
-          Buffer.from(action.swapTransaction, "base64"),
-        );
-        const recentBlockhash = versionedTx.message.recentBlockhash;
-
-        const result = await handleSendTransaction({
-          transaction: {
-            unsignedTransaction: action.swapTransaction,
-            signWith: activeAddress,
-            caip2: SOLANA_MAINNET_CAIP2,
-            recentBlockhash,
-          },
-        });
-
-        const signature =
-          typeof result === "object" && result !== null && "transactionId" in result
-            ? String(
-                (result as {
-                  transactionId?: string;
-                }).transactionId ?? "",
-              )
-            : undefined;
-
-        setSwapHistory((previous) =>
-          previous.map((item) =>
-            item.id === historyId
-              ? {
-                  ...item,
-                  status: "confirmed",
-                  signature,
-                }
-              : item,
-          ),
-        );
-        await refreshBalances();
-        return { signature };
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown swap error";
-        setSwapHistory((previous) =>
-          previous.map((item) =>
-            item.id === historyId
-              ? {
-                  ...item,
-                  status: "failed",
-                  error: errorMessage,
-                }
-              : item,
-          ),
-        );
-        return { error: errorMessage };
-      }
-    },
-    [activeAddress, handleSendTransaction, refreshBalances],
-  );
 
   if (!isReady) {
     return (
@@ -691,8 +635,21 @@ export default function Home() {
             solPrice={solPrice}
             solBalance={balances[0]?.amount ?? 0}
             walletAddress={activeAddress}
-            onExecuteSwap={executeSwapFromChat}
             swapHistory={swapHistory}
+            onManualSwapRecorded={(entry) => {
+              setSwapHistory((previous) => [
+                {
+                  id: crypto.randomUUID(),
+                  fromSymbol: entry.fromSymbol,
+                  toSymbol: entry.toSymbol,
+                  amount: entry.amount,
+                  status: entry.status,
+                  createdAt: Date.now(),
+                  error: entry.error,
+                },
+                ...previous,
+              ]);
+            }}
           />
         </aside>
       </main>
@@ -780,10 +737,14 @@ export default function Home() {
                 />
                 <button
                   type="submit"
-                  disabled={isSubmittingTx}
+                  disabled={isSubmittingTx || isSolSendDisabled}
                   className="rounded-lg border border-indigo-400/70 bg-indigo-500/20 px-3 py-2 text-sm"
                 >
-                  {isSubmittingTx ? "Submitting..." : `Confirm ${activeAction}`}
+                  {isSubmittingTx
+                    ? "Submitting..."
+                    : isSolSendDisabled
+                      ? "Enable Turnkey Sol Send"
+                      : `Confirm ${activeAction}`}
                 </button>
               </form>
             )}

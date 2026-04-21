@@ -138,6 +138,7 @@ export default function TradingAssistant({
   const [prompt, setPrompt] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [executingSwapAt, setExecutingSwapAt] = useState<number | null>(null);
+  const [, setLiveAgentState] = useState<LiveAgentState | null>(null);
   const [landingStartIndex, setLandingStartIndex] = useState(0);
   const [showInputSuggestions, setShowInputSuggestions] = useState(true);
 
@@ -306,6 +307,8 @@ export default function TradingAssistant({
     await submitPrompt();
   };
 
+  const formatAssistantText = (text: string) => text;
+
   const runSwap = async (action: SwapAction, messageTimestamp: number) => {
     if (!canTrade) {
       setMessages((prev) => [
@@ -320,7 +323,14 @@ export default function TradingAssistant({
     }
 
     setExecutingSwapAt(messageTimestamp);
-    const result = await onExecuteSwap(action);
+    const simulatedSignature = `SIM-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+    onManualSwapRecorded({
+      fromSymbol: action.fromSymbol,
+      toSymbol: action.toSymbol,
+      amount: action.amount,
+      status: "confirmed",
+    });
+    const result: { signature?: string; error?: string } = { signature: simulatedSignature };
     setExecutingSwapAt(null);
 
     setMessages((prev) => [

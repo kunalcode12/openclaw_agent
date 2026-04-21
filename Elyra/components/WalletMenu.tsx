@@ -42,7 +42,6 @@ const tokenDetails: Record<
 export default function WalletMenu({
   balances,
   hideBalances,
-  onToggleHideBalances,
   onRefreshBalances,
   isFetchingBalances,
 }: WalletMenuProps) {
@@ -92,19 +91,12 @@ export default function WalletMenu({
     },
   };
 
-  const glowVariants = {
-    hover: {
-      boxShadow: "0 0 20px rgba(59, 130, 246, 0.5), 0 0 40px rgba(59, 130, 246, 0.25)",
-      transition: { duration: 0.3 },
-    },
-  };
-
   return (
     <motion.div
       variants={containerVariants}
       initial="hidden"
       animate="visible"
-      className="absolute right-0 mt-2 w-[22rem] rounded-2xl border border-white/12 bg-gradient-to-br from-black via-black to-slate-950 p-5 shadow-2xl backdrop-blur-2xl"
+      className="absolute right-0 mt-2 w-88 rounded-2xl border border-white/12 bg-linear-to-br from-black via-black to-slate-950 p-5 shadow-2xl backdrop-blur-2xl"
       style={{
         boxShadow:
           "0 20px 60px -12px rgba(0, 0, 0, 0.6), inset 0 1px 0 0 rgba(255, 255, 255, 0.1)",
@@ -155,18 +147,18 @@ export default function WalletMenu({
             variants={buttonVariants}
             whileHover="hover"
             whileTap="tap"
-            className="group relative flex-1 overflow-hidden rounded-lg border-2 border-transparent bg-gradient-to-r from-blue-600 via-blue-500 to-cyan-500 py-2 text-xs font-bold text-white shadow-lg shadow-blue-500/30 transition-all duration-300 hover:shadow-blue-500/60"
+            className="group relative flex-1 overflow-hidden rounded-lg border-2 border-transparent bg-linear-to-r from-blue-600 via-blue-500 to-cyan-500 py-2 text-xs font-bold text-white shadow-lg shadow-blue-500/30 transition-all duration-300 hover:shadow-blue-500/60"
           >
-            <div className="absolute inset-0 bg-gradient-to-r from-blue-400 via-blue-300 to-cyan-400 opacity-0 group-hover:opacity-20 transition-opacity duration-300" />
+            <div className="absolute inset-0 bg-linear-to-r from-blue-400 via-blue-300 to-cyan-400 opacity-0 transition-opacity duration-300 group-hover:opacity-20" />
             <span className="relative z-10">Deposit</span>
           </motion.button>
           <motion.button
             variants={buttonVariants}
             whileHover="hover"
             whileTap="tap"
-            className="group relative flex-1 overflow-hidden rounded-lg border-2 border-purple-500/50 bg-gradient-to-r from-purple-900/30 to-pink-900/30 py-2 text-xs font-bold text-white backdrop-blur-sm transition-all duration-300 hover:border-purple-400/80 hover:shadow-lg hover:shadow-purple-500/20"
+            className="group relative flex-1 overflow-hidden rounded-lg border-2 border-purple-500/50 bg-linear-to-r from-purple-900/30 to-pink-900/30 py-2 text-xs font-bold text-white backdrop-blur-sm transition-all duration-300 hover:border-purple-400/80 hover:shadow-lg hover:shadow-purple-500/20"
           >
-            <div className="absolute inset-0 bg-gradient-to-r from-purple-500/0 via-purple-400/10 to-pink-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+            <div className="absolute inset-0 bg-linear-to-r from-purple-500/0 via-purple-400/10 to-pink-500/0 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
             <span className="relative z-10">Withdraw</span>
           </motion.button>
         </div>
@@ -176,7 +168,7 @@ export default function WalletMenu({
           initial={{ scaleX: 0 }}
           animate={{ scaleX: 1 }}
           transition={{ delay: 0.3, duration: 0.5 }}
-          className="mt-3.5 h-px origin-left bg-gradient-to-r from-transparent via-white/20 to-transparent"
+          className="mt-3.5 h-px origin-left bg-linear-to-r from-transparent via-white/20 to-transparent"
         />
       </motion.div>
 
@@ -197,7 +189,7 @@ export default function WalletMenu({
             Token
             {activeTab === "token" && (
               <motion.div
-                className="absolute inset-0 bg-gradient-to-r from-blue-500/20 to-cyan-500/20 rounded blur-md -z-10"
+                className="absolute inset-0 -z-10 rounded bg-linear-to-r from-blue-500/20 to-cyan-500/20 blur-md"
                 layoutId="tabGlow"
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
               />
@@ -205,7 +197,7 @@ export default function WalletMenu({
           </span>
           {activeTab === "token" && (
             <motion.div
-              className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-gradient-to-r from-blue-500 to-cyan-500"
+              className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-linear-to-r from-blue-500 to-cyan-500"
               layoutId="activeTab"
               transition={{ type: "spring", stiffness: 380, damping: 30 }}
             />
@@ -223,7 +215,7 @@ export default function WalletMenu({
             DeFi
             {activeTab === "defi" && (
               <motion.div
-                className="absolute inset-0 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded blur-md -z-10"
+                className="absolute inset-0 -z-10 rounded bg-linear-to-r from-purple-500/20 to-pink-500/20 blur-md"
                 layoutId="tabGlow"
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
               />
@@ -231,7 +223,7 @@ export default function WalletMenu({
           </span>
           {activeTab === "defi" && (
             <motion.div
-              className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-gradient-to-r from-purple-500 to-pink-500"
+              className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-linear-to-r from-purple-500 to-pink-500"
               layoutId="activeTab"
               transition={{ type: "spring", stiffness: 380, damping: 30 }}
             />
@@ -266,7 +258,7 @@ export default function WalletMenu({
                   initial="hidden"
                   animate="visible"
                   whileHover={{ scale: 1.02, x: 4 }}
-                  className="group flex cursor-pointer items-center justify-between rounded-lg border border-white/8 bg-gradient-to-r from-white/5 to-white/2 px-2.5 py-2.5 transition-all duration-300 hover:from-white/10 hover:to-white/5"
+                  className="group flex cursor-pointer items-center justify-between rounded-lg border border-white/8 bg-linear-to-r from-white/5 to-white/2 px-2.5 py-2.5 transition-all duration-300 hover:from-white/10 hover:to-white/5"
                 >
                   <div className="flex items-center gap-2.5">
                     {/* Token Icon */}
@@ -276,7 +268,7 @@ export default function WalletMenu({
                       className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold text-white transition-all duration-300 ${
                         details.iconSrc
                           ? ""
-                          : "border border-blue-400/30 bg-gradient-to-br from-blue-500/40 to-cyan-500/20 shadow-lg shadow-blue-500/10 backdrop-blur-sm group-hover:border-blue-400/60 group-hover:from-blue-500/60 group-hover:to-cyan-500/30 group-hover:shadow-blue-500/20"
+                          : "border border-blue-400/30 bg-linear-to-br from-blue-500/40 to-cyan-500/20 shadow-lg shadow-blue-500/10 backdrop-blur-sm group-hover:border-blue-400/60 group-hover:from-blue-500/60 group-hover:to-cyan-500/30 group-hover:shadow-blue-500/20"
                       }`}
                     >
                       {details.iconSrc ? (

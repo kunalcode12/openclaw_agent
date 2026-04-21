@@ -50,7 +50,6 @@ export default function Navbar({
   onLogout,
 }: NavbarProps) {
   const [copied, setCopied] = useState(false);
-  const [hoveredButton, setHoveredButton] = useState<string | null>(null);
 
   const handleCopyAddress = async () => {
     if (solAddress) {
@@ -62,7 +61,7 @@ export default function Navbar({
 
   return (
     <nav
-      className="sticky top-0 z-50 border-b border-white/5 bg-gradient-to-b from-black via-black to-black/80 backdrop-blur-xl px-6 py-2 shadow-2xl"
+      className="sticky top-0 z-50 border-b border-white/5 bg-linear-to-b from-black via-black to-black/80 px-6 py-2 shadow-2xl backdrop-blur-xl"
       title={`SOL $${solPrice.toFixed(2)}`}
     >
       <style>{`
@@ -100,7 +99,7 @@ export default function Navbar({
       <div className="mx-auto flex w-full max-w-[1800px] items-center justify-between">
         {/* Logo Section */}
         <div className="flex items-center gap-4 slide-in">
-          <div className="relative h-9 w-9 overflow-hidden rounded-xl bg-gradient-to-br from-blue-500 via-blue-600 to-purple-700 shadow-xl glow-pulse group cursor-pointer transition-transform duration-300 hover:scale-110">
+          <div className="group relative h-9 w-9 cursor-pointer overflow-hidden rounded-xl bg-linear-to-br from-blue-500 via-blue-600 to-purple-700 shadow-xl transition-transform duration-300 hover:scale-110 glow-pulse">
             <Image
               src="/logo.png"
               alt="Elyra logo"
@@ -109,14 +108,14 @@ export default function Navbar({
               priority
               className="rounded-xl"
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
+            <div className="absolute inset-0 bg-linear-to-t from-black/30 to-transparent" />
           </div>
 
           <div className="flex items-center gap-4">
             <span className="text-base font-bold tracking-tight text-white text-shadow-sm drop-shadow-md">
               Elyra
             </span>
-            <div className="h-5 w-px bg-gradient-to-b from-blue-500/50 to-transparent" />
+            <div className="h-5 w-px bg-linear-to-b from-blue-500/50 to-transparent" />
 
             <div className="group flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/3 border border-white/8 hover:border-blue-500/30 transition-all duration-300 cursor-default">
               <span className="text-xs font-medium text-white/60 group-hover:text-white/80 transition-colors">
@@ -136,9 +135,7 @@ export default function Navbar({
           {!isAuthenticated ? (
             <button
               onClick={onLogin}
-              onMouseEnter={() => setHoveredButton("login")}
-              onMouseLeave={() => setHoveredButton(null)}
-              className="group relative inline-flex items-center gap-2.5 rounded-lg border border-green-500/20 bg-gradient-to-r from-green-500/10 to-emerald-500/10 px-4 py-2 text-xs font-semibold text-white transition-all duration-300 hover:border-green-500/40 hover:from-green-500/20 hover:to-emerald-500/20 hover:shadow-lg hover:shadow-green-500/10 hover:scale-105 active:scale-95 float-in"
+              className="group relative inline-flex items-center gap-2.5 rounded-lg border border-green-500/20 bg-linear-to-r from-green-500/10 to-emerald-500/10 px-4 py-2 text-xs font-semibold text-white transition-all duration-300 hover:border-green-500/40 hover:from-green-500/20 hover:to-emerald-500/20 hover:shadow-lg hover:shadow-green-500/10 hover:scale-105 active:scale-95 float-in"
             >
               <div className="relative flex items-center gap-2">
                 <div className="h-2 w-2 rounded-full bg-green-400 group-hover:bg-green-300 group-hover:shadow-lg group-hover:shadow-green-500/50 transition-all duration-300 animate-pulse" />
@@ -152,16 +149,14 @@ export default function Navbar({
                 className="relative float-in"
                 onMouseEnter={() => {
                   onWalletMenuOpenChange(true);
-                  setHoveredButton("wallet");
                 }}
                 onMouseLeave={() => {
                   onWalletMenuOpenChange(false);
-                  setHoveredButton(null);
                 }}
               >
                 <button
                   onClick={() => onWalletMenuOpenChange(!walletMenuOpen)}
-                  className="group inline-flex items-center gap-2 rounded-lg border border-white/10 bg-gradient-to-br from-white/8 to-white/3 px-3.5 py-2 text-xs font-semibold text-white transition-all duration-300 hover:border-blue-500/30 hover:from-blue-500/15 hover:to-white/8 hover:shadow-lg hover:shadow-blue-500/10 hover:scale-105 active:scale-95 backdrop-blur-xl"
+                  className="group inline-flex items-center gap-2 rounded-lg border border-white/10 bg-linear-to-br from-white/8 to-white/3 px-3.5 py-2 text-xs font-semibold text-white transition-all duration-300 hover:border-blue-500/30 hover:from-blue-500/15 hover:to-white/8 hover:shadow-lg hover:shadow-blue-500/10 hover:scale-105 active:scale-95 backdrop-blur-xl"
                 >
                   <Wallet
                     size={15}
@@ -202,9 +197,7 @@ export default function Navbar({
               {/* Deposit Button */}
               <button
                 onClick={onOpenDeposit}
-                onMouseEnter={() => setHoveredButton("deposit")}
-                onMouseLeave={() => setHoveredButton(null)}
-                className="group relative inline-flex items-center gap-2 rounded-lg border border-blue-500/30 bg-gradient-to-r from-blue-500/20 to-purple-500/15 px-4 py-2 text-xs font-semibold text-white transition-all duration-300 hover:border-blue-500/50 hover:from-blue-500/30 hover:to-purple-500/25 hover:shadow-lg hover:shadow-blue-500/20 hover:scale-105 active:scale-95 float-in overflow-hidden"
+                className="group relative inline-flex items-center gap-2 overflow-hidden rounded-lg border border-blue-500/30 bg-linear-to-r from-blue-500/20 to-purple-500/15 px-4 py-2 text-xs font-semibold text-white transition-all duration-300 hover:border-blue-500/50 hover:from-blue-500/30 hover:to-purple-500/25 hover:shadow-lg hover:shadow-blue-500/20 hover:scale-105 active:scale-95 float-in"
               >
                 <div className="absolute inset-0 shimmer-effect opacity-0 group-hover:opacity-100" />
                 <Zap
@@ -218,14 +211,12 @@ export default function Navbar({
               <div className="relative float-in">
                 <button
                   onClick={() => onProfileMenuOpenChange(!profileMenuOpen)}
-                  onMouseEnter={() => setHoveredButton("profile")}
-                  onMouseLeave={() => setHoveredButton(null)}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-gradient-to-br from-white/10 to-white/5 text-xs font-bold text-white transition-all duration-300 hover:border-purple-500/40 hover:from-purple-500/20 hover:to-white/10 hover:shadow-lg hover:shadow-purple-500/10 hover:scale-110 active:scale-95 backdrop-blur-xl"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-linear-to-br from-white/10 to-white/5 text-xs font-bold text-white transition-all duration-300 hover:border-purple-500/40 hover:from-purple-500/20 hover:to-white/10 hover:shadow-lg hover:shadow-purple-500/10 hover:scale-110 active:scale-95 backdrop-blur-xl"
                 >
                   {userName?.[0]?.toUpperCase() ?? "P"}
                 </button>
                 {profileMenuOpen ? (
-                  <div className="dropdown-slide absolute right-0 top-full mt-3 w-80 rounded-xl border border-white/10 bg-gradient-to-b from-black/90 to-black/70 bg-black backdrop-blur-2xl p-6 shadow-2xl shadow-black/50">
+                  <div className="dropdown-slide absolute right-0 top-full mt-3 w-80 rounded-xl border border-white/10 bg-linear-to-b from-black/90 to-black/70 bg-black p-6 shadow-2xl shadow-black/50 backdrop-blur-2xl">
                     {/* Header */}
                     <div className="border-b border-white/10 pb-4 float-in">
                       <p className="text-xs font-medium text-white/50 uppercase tracking-widest">
@@ -251,7 +242,7 @@ export default function Navbar({
                         <span className="truncate">
                           {solAddress ?? "No Solana wallet account"}
                         </span>
-                        <div className="flex-shrink-0 transition-all duration-300">
+                        <div className="shrink-0 transition-all duration-300">
                           {copied ? (
                             <Check
                               size={15}
@@ -270,7 +261,7 @@ export default function Navbar({
                     {/* Logout Button */}
                     <button
                       onClick={onLogout}
-                      className="mt-5 w-full flex items-center justify-center gap-2.5 rounded-lg border border-red-500/30 bg-gradient-to-r from-red-500/15 to-red-500/10 px-3 py-2.5 text-xs font-semibold text-red-400 transition-all duration-300 hover:border-red-500/50 hover:from-red-500/25 hover:to-red-500/15 hover:shadow-lg hover:shadow-red-500/15 hover:text-red-300 hover:scale-105 active:scale-95 float-in"
+                      className="mt-5 flex w-full items-center justify-center gap-2.5 rounded-lg border border-red-500/30 bg-linear-to-r from-red-500/15 to-red-500/10 px-3 py-2.5 text-xs font-semibold text-red-400 transition-all duration-300 hover:border-red-500/50 hover:from-red-500/25 hover:to-red-500/15 hover:shadow-lg hover:shadow-red-500/15 hover:text-red-300 hover:scale-105 active:scale-95 float-in"
                       style={{ animationDelay: "0.2s" }}
                     >
                       <LogOut size={15} />

@@ -47,17 +47,20 @@ export default function ActionModal({
   statusMessage,
   onAddressCopied,
 }: ActionModalProps) {
+  void userName;
+  void statusMessage;
+
   if (!open || !isAuthenticated) {
     return null;
   }
 
   return (
     <div
-      className="fixed inset-0 z-[100] grid place-items-center bg-black/75 p-3 backdrop-blur-md"
+      className="fixed inset-0 z-100 grid place-items-center bg-black/75 p-3 backdrop-blur-md"
       onClick={onClose}
     >
       <div
-        className="relative max-h-[90vh] w-full max-w-[24rem] overflow-y-auto rounded-2xl border border-white/10 bg-gradient-to-b from-[#08080d] to-black p-4 shadow-2xl shadow-black/60"
+        className="relative max-h-[90vh] w-full max-w-[24rem] overflow-y-auto rounded-2xl border border-white/10 bg-linear-to-b from-[#08080d] to-black p-4 shadow-2xl shadow-black/60"
         onClick={(event) => event.stopPropagation()}
       >
         <button
@@ -75,7 +78,7 @@ export default function ActionModal({
                 onClick={() => onSetActiveAction(action)}
                 className={`flex-1 rounded-md px-3 py-1.5 text-sm font-semibold capitalize transition ${
                   activeAction === action
-                    ? "border border-transparent bg-gradient-to-r from-blue-600 via-blue-500 to-cyan-500 text-white shadow-md shadow-blue-500/35"
+                    ? "border border-transparent bg-linear-to-r from-blue-600 via-blue-500 to-cyan-500 text-white shadow-md shadow-blue-500/35"
                     : "border border-white/10 bg-black/40 text-white/70 hover:text-white"
                 }`}
               >
@@ -134,7 +137,7 @@ export default function ActionModal({
                 await navigator.clipboard.writeText(solAddress);
                 onAddressCopied();
               }}
-              className="w-full rounded-lg border border-blue-500/60 bg-gradient-to-r from-blue-600 via-blue-500 to-cyan-500 px-3 py-2 text-sm font-semibold text-white shadow-md shadow-blue-500/30"
+              className="w-full rounded-lg border border-blue-500/60 bg-linear-to-r from-blue-600 via-blue-500 to-cyan-500 px-3 py-2 text-sm font-semibold text-white shadow-md shadow-blue-500/30"
             >
               Copy Address
             </button>
@@ -169,7 +172,7 @@ export default function ActionModal({
 
               <button
                 type="button"
-                className="w-full rounded-lg border border-blue-500/60 bg-gradient-to-r from-blue-600 via-blue-500 to-cyan-500 px-3 py-2 text-sm font-semibold text-white shadow-md shadow-blue-500/30"
+                className="w-full rounded-lg border border-blue-500/60 bg-linear-to-r from-blue-600 via-blue-500 to-cyan-500 px-3 py-2 text-sm font-semibold text-white shadow-md shadow-blue-500/30"
               >
                 Transfer
               </button>
@@ -248,7 +251,7 @@ export default function ActionModal({
             <button
               type="submit"
               disabled={isSubmittingTx}
-              className="w-full rounded-lg border border-blue-500/60 bg-gradient-to-r from-blue-600 via-blue-500 to-cyan-500 px-3 py-2 text-sm font-semibold text-white shadow-md shadow-blue-500/30 disabled:opacity-60"
+              className="w-full rounded-lg border border-blue-500/60 bg-linear-to-r from-blue-600 via-blue-500 to-cyan-500 px-3 py-2 text-sm font-semibold text-white shadow-md shadow-blue-500/30 disabled:opacity-60"
             >
               {isSubmittingTx
                 ? "Submitting..."

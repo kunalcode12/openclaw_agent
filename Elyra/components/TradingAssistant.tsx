@@ -298,18 +298,6 @@ const LANDING_CARDS = [
   { title: "Risk-adjusted portfolio rebalance", subtitle: "Strategy", icon: PencilLine },
 ];
 
-const WELCOME_TEXT =
-  "I am your Solana trading copilot. Ask market questions, request strategy ideas, or type a swap like 'Swap 0.1 SOL to USDC'.";
-
-function buildWelcomeMessage(): ChatMessage {
-  return {
-    id: newMessageId(),
-    role: "assistant",
-    content: WELCOME_TEXT,
-    timestamp: Date.now(),
-  };
-}
-
 export default function TradingAssistant({
   solPrice,
   solBalance,
@@ -321,9 +309,7 @@ export default function TradingAssistant({
   const progressTimerRef = useRef<number | null>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
 
-  const [messages, setMessages] = useState<ChatMessage[]>(() => [
-    buildWelcomeMessage(),
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [prompt, setPrompt] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [executingSwapAt, setExecutingSwapAt] = useState<number | null>(null);
@@ -343,7 +329,7 @@ export default function TradingAssistant({
   const startNewChat = () => {
     chatSessionRef.current += 1;
     clearProgressTimer();
-    setMessages([buildWelcomeMessage()]);
+    setMessages([]);
     setPrompt("");
     setIsSubmitting(false);
     setExecutingSwapAt(null);
@@ -354,7 +340,7 @@ export default function TradingAssistant({
   };
 
   const canTrade = Boolean(walletAddress);
-  const showLanding = messages.length <= 1;
+  const showLanding = messages.length === 0;
   const visibleLandingCards = useMemo(() => {
     const pageSize = 4;
     return Array.from({ length: pageSize }, (_, offset) => {

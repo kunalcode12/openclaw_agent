@@ -50,6 +50,10 @@ export default function Navbar({
   onLogout,
 }: NavbarProps) {
   const [copied, setCopied] = useState(false);
+  const shortSolAddress =
+    solAddress && solAddress.length > 10
+      ? `${solAddress.slice(0, 4)}...${solAddress.slice(-4)}`
+      : solAddress;
 
   const handleCopyAddress = async () => {
     if (solAddress) {
@@ -139,7 +143,7 @@ export default function Navbar({
             >
               <div className="relative flex items-center gap-2">
                 <div className="h-2 w-2 rounded-full bg-green-400 group-hover:bg-green-300 group-hover:shadow-lg group-hover:shadow-green-500/50 transition-all duration-300 animate-pulse" />
-                <span>Login with Turnkey</span>
+                <span>Login with Privy</span>
               </div>
             </button>
           ) : (
@@ -207,6 +211,25 @@ export default function Navbar({
                 <span className="relative">Deposit</span>
               </button>
 
+              {shortSolAddress ? (
+                <button
+                  type="button"
+                  onClick={handleCopyAddress}
+                  className="group inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-mono text-white/80 transition-all duration-300 hover:border-blue-500/30 hover:bg-white/10 hover:text-white"
+                  title={solAddress}
+                >
+                  <span>{shortSolAddress}</span>
+                  {copied ? (
+                    <Check size={13} className="text-green-400" />
+                  ) : (
+                    <Copy
+                      size={13}
+                      className="text-white/40 group-hover:text-white/70"
+                    />
+                  )}
+                </button>
+              ) : null}
+
               {/* Profile Menu */}
               <div className="relative float-in">
                 <button
@@ -223,7 +246,7 @@ export default function Navbar({
                         Account
                       </p>
                       <p className="mt-3 text-sm font-bold text-white tracking-tight">
-                        {userName ?? "Turnkey User"}
+                        {userName ?? "Privy User"}
                       </p>
                     </div>
 

@@ -1,48 +1,24 @@
 "use client";
 
-import {
-  TurnkeyProvider,
-  type TurnkeyProviderConfig,
-} from "@turnkey/react-wallet-kit";
+import { PrivyProvider } from "@privy-io/react-auth";
 
-const turnkeyConfig: TurnkeyProviderConfig = {
-  organizationId: process.env.NEXT_PUBLIC_ORGANIZATION_ID ?? "",
-  authProxyConfigId: process.env.NEXT_PUBLIC_AUTH_PROXY_CONFIG_ID ?? "",
-  auth: {
-    oauthConfig: {
-      openOauthInPage: true,
-      oauthRedirectUri: process.env.NEXT_PUBLIC_REDIRECT_URI ?? "",
-      googleClientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "",
-    },
-  },
-  walletConfig: {
-    chains: {
-      solana: {
-        native: true,
-        walletConnectNamespaces: [],
-      },
-      ethereum: {
-        native: false,
-        walletConnectNamespaces: [],
-      },
-    },
-    features: {
-      auth: true,
-    },
-  },
-};
+const PRIVY_APP_ID = "cmoe9pyaf01390cl5b266f3g5";
+const PRIVY_CLIENT_ID = "client-WY6YegrwX6Hzz1GxvbWAFX7mkih5KU7xmkQMCJzp8EgvX";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <TurnkeyProvider
-      config={turnkeyConfig}
-      callbacks={{
-        onError: (error) => {
-          console.error("Turnkey error:", error);
+    <PrivyProvider
+      appId={PRIVY_APP_ID}
+      clientId={PRIVY_CLIENT_ID}
+      config={{
+        embeddedWallets: {
+          solana: {
+            createOnLogin: "users-without-wallets",
+          },
         },
       }}
     >
       {children}
-    </TurnkeyProvider>
+    </PrivyProvider>
   );
 }

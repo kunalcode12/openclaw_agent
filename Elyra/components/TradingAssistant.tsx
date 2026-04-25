@@ -5,6 +5,7 @@ import Image from "next/image";
 import { AnimatePresence, motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { PublicKey } from "@solana/web3.js";
 import {
   Bot,
   Search,
@@ -31,6 +32,50 @@ export type SwapAction = {
   userPublicKey?: string;
 };
 
+type DerivativesSnapshot = {
+  source: "drift-data-api";
+  marketSymbol: string;
+  openInterest?: number;
+  fundingRateNow?: number;
+  fundingRateAvg24h?: number;
+  optionsSignal: "limited-on-solana";
+  ahr999Proxy?: number;
+  rainbowBand?: "deep-value" | "accumulation" | "neutral" | "heating-up" | "euphoria" | "unknown";
+  ohlcv?: {
+    resolution: "60";
+    latestClose?: number;
+    latestQuoteVolume?: number;
+    recordsUsed: number;
+  };
+  notes: string[];
+};
+
+type PredictionSnapshot = {
+  symbol: string;
+  current_price: string;
+  predicted_price: string;
+  predicted_in: string;
+  confidence: string;
+  reason: string;
+  success: boolean;
+  error?: string;
+};
+
+type PredictionMarketSnapshot = {
+  id: string;
+  ticker: string;
+  title: string;
+  description?: string;
+  yes_price: string;
+  no_price: string;
+  yes_probability: string;
+  volume: string;
+  category?: string;
+  end_date?: string;
+  success: boolean;
+  error?: string;
+};
+
 function newMessageId() {
   if (typeof globalThis !== "undefined" && globalThis.crypto?.randomUUID) {
     return globalThis.crypto.randomUUID();
@@ -46,6 +91,9 @@ type ChatMessage = {
   action?: SwapAction;
   suggestions?: string[];
   strategyNotes?: string[];
+  derivatives?: DerivativesSnapshot | null;
+  prediction?: PredictionSnapshot | null;
+  predictionMarkets?: { type: "single" | "list"; data: PredictionMarketSnapshot[] } | null;
   executionReport?: {
     route: string;
     size: string;
@@ -233,6 +281,8 @@ type TradingAssistantProps = {
   solPrice: number;
   solBalance: number;
   walletAddress?: string;
+  privyWallet?: unknown;
+  onRequestWalletConnect?: () => void;
   swapHistory: SwapHistoryItem[];
   onManualSwapRecorded: (entry: {
     fromSymbol: string;
@@ -243,29 +293,246 @@ type TradingAssistantProps = {
   }) => void;
 };
 
+type StructuredSection = {
+  key: string;
+  title: string;
+  body: string;
+};
+
+type ParsedTable = {
+  headers: string[];
+  rows: string[][];
+};
+
+type CellTone = "bull" | "bear" | "neutral";
+
+declare global {
+  interface Window {
+    Jupiter?: {
+      init: (options: Record<string, unknown>) => void;
+      syncProps?: (options: Record<string, unknown>) => void;
+    };
+  }
+}
+
+const STRUCTURED_SECTION_ORDER: Array<{ key: string; title: string; aliases: string[] }> = [
+  { key: "tradeSnapshot", title: "TRADE SNAPSHOT", aliases: ["1. TRADE SNAPSHOT", "TRADE SNAPSHOT"] },
+  { key: "marketContext", title: "MARKET CONTEXT", aliases: ["2. MARKET CONTEXT", "MARKET CONTEXT"] },
+  { key: "edge", title: "EDGE", aliases: ["3. EDGE", "EDGE"] },
+  { key: "riskMatrix", title: "RISK MATRIX", aliases: ["4. RISK MATRIX", "RISK MATRIX"] },
+  { key: "tradePlan", title: "TRADE PLAN", aliases: ["5. TRADE PLAN", "TRADE PLAN"] },
+  { key: "scenarioSwitch", title: "SCENARIO SWITCH", aliases: ["6. SCENARIO SWITCH", "SCENARIO SWITCH"] },
+  { key: "finalCall", title: "FINAL CALL", aliases: ["7. FINAL CALL", "FINAL CALL"] },
+];
+
+function normalizeStructuredBody(raw: string): string {
+  let text = raw.trim();
+  for (const section of STRUCTURED_SECTION_ORDER) {
+    for (const alias of section.aliases) {
+      const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      text = text.replace(new RegExp(`\\s*${escaped}\\s*\\|`, "gi"), `\n${section.title}\n|`);
+      text = text.replace(new RegExp(`\\s*${escaped}\\s*`, "gi"), `\n${section.title}\n`);
+    }
+  }
+  return text.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function parseStructuredSections(raw: string): StructuredSection[] | null {
+  const normalized = normalizeStructuredBody(raw);
+  const positions: Array<{ index: number; key: string; title: string }> = [];
+  for (const section of STRUCTURED_SECTION_ORDER) {
+    const idx = normalized.toUpperCase().indexOf(section.title);
+    if (idx >= 0) {
+      positions.push({ index: idx, key: section.key, title: section.title });
+    }
+  }
+  if (positions.length < 4) return null;
+
+  positions.sort((a, b) => a.index - b.index);
+  const parsed: StructuredSection[] = [];
+  for (let i = 0; i < positions.length; i += 1) {
+    const current = positions[i];
+    const next = positions[i + 1];
+    const bodyStart = current.index + current.title.length;
+    const bodyEnd = next ? next.index : normalized.length;
+    const body = normalized.slice(bodyStart, bodyEnd).trim();
+    if (!body) continue;
+    parsed.push({ key: current.key, title: current.title, body });
+  }
+  return parsed.length >= 4 ? parsed : null;
+}
+
+function parseMarkdownTable(lines: string[]): ParsedTable | null {
+  if (lines.length < 2) return null;
+  const isSeparator = (line: string) =>
+    /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line.trim());
+  if (!isSeparator(lines[1])) return null;
+
+  const splitRow = (line: string) =>
+    line
+      .trim()
+      .replace(/^\|/, "")
+      .replace(/\|$/, "")
+      .split("|")
+      .map((cell) => cell.trim());
+
+  const headers = splitRow(lines[0]);
+  const rows = lines.slice(2).filter((line) => line.includes("|")).map(splitRow);
+  if (headers.length === 0 || rows.length === 0) return null;
+  return { headers, rows };
+}
+
+function parseBodyBlocks(body: string): Array<{ type: "table" | "text"; value: string | ParsedTable }> {
+  const lines = body.split("\n");
+  const blocks: Array<{ type: "table" | "text"; value: string | ParsedTable }> = [];
+  let i = 0;
+
+  const flushText = (buffer: string[]) => {
+    const text = buffer.join("\n").trim();
+    if (text) blocks.push({ type: "text", value: text });
+  };
+
+  while (i < lines.length) {
+    if (lines[i].includes("|") && i + 1 < lines.length) {
+      const candidate: string[] = [lines[i], lines[i + 1]];
+      let j = i + 2;
+      while (j < lines.length && lines[j].includes("|")) {
+        candidate.push(lines[j]);
+        j += 1;
+      }
+      const table = parseMarkdownTable(candidate);
+      if (table) {
+        blocks.push({ type: "table", value: table });
+        i = j;
+        continue;
+      }
+    }
+
+    const textBuffer: string[] = [];
+    while (
+      i < lines.length &&
+      !(lines[i].includes("|") && i + 1 < lines.length && parseMarkdownTable([lines[i], lines[i + 1], lines[i + 2] ?? ""]))
+    ) {
+      textBuffer.push(lines[i]);
+      i += 1;
+    }
+    flushText(textBuffer);
+  }
+
+  return blocks;
+}
+
+function inferCellTone(value: string): CellTone {
+  const text = value.toLowerCase().trim();
+  if (!text) return "neutral";
+  if (text.includes("bear") || text.includes("avoid") || text.includes("sell") || text.includes("down")) {
+    return "bear";
+  }
+  if (text.includes("bull") || text.includes("buy") || text.includes("scale") || text.includes("up")) {
+    return "bull";
+  }
+  return "neutral";
+}
+
+function parseBoundedMetric(value: string): { score: number; max: number } | null {
+  const fraction = value.match(/(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/);
+  if (fraction) {
+    const score = Number(fraction[1]);
+    const max = Number(fraction[2]);
+    if (Number.isFinite(score) && Number.isFinite(max) && max > 0) {
+      return { score, max };
+    }
+  }
+
+  const confidence = value.match(/(\d+(?:\.\d+)?)\s*(?:\/\s*10)?$/);
+  if (confidence) {
+    const score = Number(confidence[1]);
+    if (Number.isFinite(score) && score >= 0 && score <= 10) {
+      return { score, max: 10 };
+    }
+  }
+  return null;
+}
+
+function isNumericLike(value: string): boolean {
+  return /^[$]?\s*-?\d[\d,]*(\.\d+)?%?$/.test(value.trim());
+}
+
+function getSectionColumnAlignment(sectionKey: string, header: string) {
+  const normalized = header.toLowerCase();
+  if (sectionKey === "tradeSnapshot") {
+    if (["price", "confidence (1-10)"].includes(normalized)) return "right";
+  }
+  if (sectionKey === "riskMatrix") {
+    if (normalized.includes("impact")) return "center";
+  }
+  if (sectionKey === "tradePlan") {
+    if (["risk/reward", "position size"].includes(normalized)) return "right";
+  }
+  return "left";
+}
+
+function renderMetricBar(value: string) {
+  const metric = parseBoundedMetric(value);
+  if (!metric) return null;
+  const ratio = Math.max(0, Math.min(1, metric.score / metric.max));
+  const width = Math.max(8, Math.round(ratio * 100));
+  const tone = ratio >= 0.67 ? "bg-emerald-400/70" : ratio >= 0.4 ? "bg-amber-400/70" : "bg-rose-400/70";
+  return (
+    <div className="mt-1 h-1.5 w-full rounded-full bg-white/10">
+      <div className={`h-1.5 rounded-full ${tone}`} style={{ width: `${width}%` }} />
+    </div>
+  );
+}
+
+function renderToneBadge(value: string) {
+  const tone = inferCellTone(value);
+  if (tone === "neutral") return null;
+  if (tone === "bull") {
+    return <span className="ml-1 inline-flex items-center text-[10px] text-emerald-300">🟢</span>;
+  }
+  return <span className="ml-1 inline-flex items-center text-[10px] text-rose-300">🔴</span>;
+}
+
 function AssistantMarkdown({ content }: { content: string }) {
   return (
-    <div className="space-y-2 text-[12px] leading-snug text-white/92">
+    <div className="space-y-2 text-[12px] leading-relaxed text-white/92">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          h1: ({ children }) => <h3 className="text-[13px] font-semibold text-white">{children}</h3>,
-          h2: ({ children }) => <h3 className="text-[13px] font-semibold text-white">{children}</h3>,
-          h3: ({ children }) => <h4 className="text-[12px] font-semibold text-white">{children}</h4>,
-          p: ({ children }) => <p className="break-words whitespace-pre-wrap text-[12px] leading-snug text-white/92">{children}</p>,
-          ul: ({ children }) => <ul className="space-y-1 pl-4 text-[12px] text-white/90">{children}</ul>,
-          ol: ({ children }) => <ol className="space-y-1 pl-4 text-[12px] text-white/90">{children}</ol>,
-          li: ({ children }) => <li className="list-disc">{children}</li>,
+          h1: ({ children }) => (
+            <h3 className="rounded-md border border-indigo-400/20 bg-indigo-500/10 px-2 py-1 text-[12px] font-semibold tracking-wide text-indigo-100">
+              {children}
+            </h3>
+          ),
+          h2: ({ children }) => (
+            <h3 className="rounded-md border border-indigo-400/20 bg-indigo-500/10 px-2 py-1 text-[12px] font-semibold tracking-wide text-indigo-100">
+              {children}
+            </h3>
+          ),
+          h3: ({ children }) => (
+            <h4 className="rounded-md border border-indigo-400/20 bg-indigo-500/10 px-2 py-1 text-[12px] font-semibold tracking-wide text-indigo-100">
+              {children}
+            </h4>
+          ),
+          p: ({ children }) => <p className="break-words text-[12px] leading-relaxed text-white/92">{children}</p>,
+          ul: ({ children }) => <ul className="space-y-1.5 pl-4 text-[12px] text-white/90">{children}</ul>,
+          ol: ({ children }) => <ol className="space-y-1.5 pl-4 text-[12px] text-white/90">{children}</ol>,
+          li: ({ children }) => <li className="list-disc leading-relaxed">{children}</li>,
           table: ({ children }) => (
-            <div className="my-2 overflow-x-auto rounded-lg border border-white/12 bg-black/35">
-              <table className="min-w-full border-collapse text-left text-[11px]">{children}</table>
+            <div className="my-2 overflow-x-auto rounded-lg border border-white/12 bg-[#0b0b10] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+              <table className="min-w-full table-fixed border-collapse text-left font-mono text-[11px]">{children}</table>
             </div>
           ),
-          thead: ({ children }) => <thead className="bg-white/[0.06] text-white/80">{children}</thead>,
-          tbody: ({ children }) => <tbody className="text-white/88">{children}</tbody>,
-          tr: ({ children }) => <tr className="border-t border-white/10 first:border-t-0">{children}</tr>,
-          th: ({ children }) => <th className="px-2.5 py-2 font-semibold whitespace-nowrap">{children}</th>,
-          td: ({ children }) => <td className="px-2.5 py-2 align-top">{children}</td>,
+          thead: ({ children }) => (
+            <thead className="border-b border-white/15 bg-white/[0.08] text-[10px] uppercase tracking-[0.08em] text-white/75">
+              {children}
+            </thead>
+          ),
+          tbody: ({ children }) => <tbody className="text-white/90 [&_tr:nth-child(even)]:bg-white/[0.02]">{children}</tbody>,
+          tr: ({ children }) => <tr className="border-t border-white/8 first:border-t-0">{children}</tr>,
+          th: ({ children }) => <th className="px-2.5 py-2 text-left font-semibold whitespace-nowrap">{children}</th>,
+          td: ({ children }) => <td className="px-2.5 py-2 align-top text-[11px] leading-relaxed">{children}</td>,
           code: ({ children }) => (
             <code className="rounded bg-white/[0.08] px-1 py-0.5 font-mono text-[11px] text-white/95">{children}</code>
           ),
@@ -276,6 +543,219 @@ function AssistantMarkdown({ content }: { content: string }) {
       >
         {content}
       </ReactMarkdown>
+    </div>
+  );
+}
+
+function NativeDataTable({ table, sectionKey }: { table: ParsedTable; sectionKey: string }) {
+  return (
+    <div className="my-2 overflow-x-auto rounded-lg border border-indigo-400/20 bg-[#0a0c13]">
+      <table className="min-w-full border-collapse text-left font-mono text-[11px]">
+        <thead className="bg-indigo-500/10 text-[10px] uppercase tracking-[0.08em] text-indigo-100/90">
+          <tr>
+            {table.headers.map((header, idx) => (
+              <th key={`${header}-${idx}`} className="border-b border-indigo-400/20 px-2.5 py-2 font-semibold">
+                {header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.map((row, rowIndex) => (
+            <tr key={rowIndex} className="border-t border-white/8 odd:bg-white/[0.02]">
+              {table.headers.map((header, colIndex) => {
+                const cell = row[colIndex] ?? "-";
+                const alignRule = getSectionColumnAlignment(sectionKey, header);
+                const isNumeric = isNumericLike(cell);
+                const alignClass =
+                  alignRule === "right" || (alignRule === "left" && isNumeric)
+                    ? "text-right tabular-nums"
+                    : alignRule === "center"
+                      ? "text-center"
+                      : "text-left";
+                return (
+                  <td key={`${rowIndex}-${colIndex}`} className={`px-2.5 py-2 text-white/90 ${alignClass}`}>
+                    <div>
+                      <span>{cell}</span>
+                      {renderToneBadge(cell)}
+                      {renderMetricBar(cell)}
+                    </div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function NativeSectionBody({ body, sectionKey }: { body: string; sectionKey: string }) {
+  const blocks = parseBodyBlocks(body);
+  return (
+    <div className="space-y-2">
+      {blocks.map((block, idx) => {
+        if (block.type === "table") {
+          return <NativeDataTable key={`table-${idx}`} table={block.value as ParsedTable} sectionKey={sectionKey} />;
+        }
+        const text = block.value as string;
+        if (sectionKey === "finalCall") {
+          return (
+            <div key={`text-${idx}`} className="rounded-md border border-emerald-400/25 bg-emerald-500/10 px-2.5 py-2">
+              <AssistantMarkdown content={text} />
+            </div>
+          );
+        }
+        return <AssistantMarkdown key={`text-${idx}`} content={text} />;
+      })}
+    </div>
+  );
+}
+
+function StructuredAnalysisCard({ content }: { content: string }) {
+  const sections = parseStructuredSections(content);
+  if (!sections) {
+    return <AssistantMarkdown content={content} />;
+  }
+
+  return (
+    <div className="space-y-2.5">
+      {sections.map((section) => (
+        <div
+          key={section.key}
+          className="rounded-lg border border-indigo-400/20 bg-linear-to-br from-[#0f1118] to-[#090b12] p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+        >
+          <div className="mb-2 inline-flex rounded-md border border-indigo-400/35 bg-indigo-500/15 px-2 py-1">
+            <p className="text-[10px] font-semibold tracking-[0.1em] text-indigo-100">{section.title}</p>
+          </div>
+          <NativeSectionBody body={section.body} sectionKey={section.key} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DerivativesPanel({ data }: { data: DerivativesSnapshot }) {
+  const formatNum = (v?: number, d = 2) =>
+    typeof v === "number" && Number.isFinite(v) ? v.toLocaleString(undefined, { maximumFractionDigits: d }) : "N/A";
+  const fundingTone =
+    typeof data.fundingRateNow === "number" ? (data.fundingRateNow > 0 ? "text-rose-300" : "text-emerald-300") : "text-white/80";
+  const rainbowTone =
+    data.rainbowBand === "deep-value" || data.rainbowBand === "accumulation"
+      ? "text-emerald-300"
+      : data.rainbowBand === "heating-up" || data.rainbowBand === "euphoria"
+        ? "text-amber-300"
+        : "text-white/80";
+
+  return (
+    <div className="mb-2 rounded-lg border border-cyan-400/25 bg-linear-to-br from-cyan-500/10 to-blue-500/10 p-2.5">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-[10px] font-semibold tracking-[0.1em] text-cyan-100">DERIVATIVES PANEL · {data.marketSymbol}</p>
+        <span className="text-[10px] text-cyan-200/70">{data.source}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-3">
+        <div className="rounded-md border border-white/10 bg-black/25 p-2">
+          <p className="text-white/50">Open Interest</p>
+          <p className="font-mono text-white">{formatNum(data.openInterest, 0)}</p>
+        </div>
+        <div className="rounded-md border border-white/10 bg-black/25 p-2">
+          <p className="text-white/50">Funding (Now)</p>
+          <p className={`font-mono ${fundingTone}`}>{formatNum(data.fundingRateNow, 6)}</p>
+        </div>
+        <div className="rounded-md border border-white/10 bg-black/25 p-2">
+          <p className="text-white/50">Funding (24h Avg)</p>
+          <p className="font-mono text-white">{formatNum(data.fundingRateAvg24h, 6)}</p>
+        </div>
+        <div className="rounded-md border border-white/10 bg-black/25 p-2">
+          <p className="text-white/50">AHR999 Proxy</p>
+          <p className="font-mono text-white">{formatNum(data.ahr999Proxy, 3)}</p>
+        </div>
+        <div className="rounded-md border border-white/10 bg-black/25 p-2">
+          <p className="text-white/50">Rainbow Band</p>
+          <p className={`font-mono capitalize ${rainbowTone}`}>{data.rainbowBand ?? "unknown"}</p>
+        </div>
+        <div className="rounded-md border border-white/10 bg-black/25 p-2">
+          <p className="text-white/50">Latest 1h Close</p>
+          <p className="font-mono text-white">{formatNum(data.ohlcv?.latestClose, 4)}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PredictionPanel({ data }: { data: PredictionSnapshot }) {
+  const confidenceNum = Number.parseInt(data.confidence, 10);
+  const confidencePct =
+    Number.isFinite(confidenceNum) && confidenceNum >= 0
+      ? Math.max(0, Math.min(100, confidenceNum))
+      : 0;
+  const confidenceTone =
+    confidencePct >= 70 ? "bg-emerald-400/70" : confidencePct >= 50 ? "bg-amber-400/70" : "bg-rose-400/70";
+
+  return (
+    <div className="mb-2 rounded-lg border border-violet-400/25 bg-linear-to-br from-violet-500/10 to-fuchsia-500/10 p-2.5">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-[10px] font-semibold tracking-[0.1em] text-violet-100">AI PRICE PREDICTION · {data.symbol}</p>
+        <span className="text-[10px] text-violet-200/70">Dexscreener model</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
+        <div className="rounded-md border border-white/10 bg-black/25 p-2">
+          <p className="text-white/50">Current</p>
+          <p className="font-mono text-white">{data.current_price}</p>
+        </div>
+        <div className="rounded-md border border-white/10 bg-black/25 p-2">
+          <p className="text-white/50">Predicted</p>
+          <p className="font-mono text-white">
+            {data.predicted_price} <span className="text-white/60">{data.predicted_in}</span>
+          </p>
+        </div>
+        <div className="rounded-md border border-white/10 bg-black/25 p-2 sm:col-span-2">
+          <p className="text-white/50">Confidence</p>
+          <p className="font-mono text-white">{data.confidence}</p>
+          <div className="mt-1 h-1.5 w-full rounded-full bg-white/10">
+            <div className={`h-1.5 rounded-full ${confidenceTone}`} style={{ width: `${confidencePct}%` }} />
+          </div>
+        </div>
+      </div>
+      <p className="mt-2 text-[11px] text-violet-100/85">{data.reason}</p>
+    </div>
+  );
+}
+
+function PredictionMarketsPanel({
+  snapshot,
+}: {
+  snapshot: { type: "single" | "list"; data: PredictionMarketSnapshot[] };
+}) {
+  const markets = snapshot.data.filter((m) => m.success).slice(0, 6);
+  if (markets.length === 0) return null;
+
+  return (
+    <div className="mb-2 rounded-lg border border-amber-400/25 bg-linear-to-br from-amber-500/10 to-orange-500/10 p-2.5">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-[10px] font-semibold tracking-[0.1em] text-amber-100">
+          PREDICTION MARKETS · {snapshot.type === "single" ? "SINGLE" : "ACTIVE LIST"}
+        </p>
+        <span className="text-[10px] text-amber-200/70">DFlow / Kalshi on Solana</span>
+      </div>
+      <div className="space-y-2">
+        {markets.map((market) => (
+          <div key={market.id || market.ticker} className="rounded-md border border-white/10 bg-black/25 p-2">
+            <p className="text-[11px] font-semibold text-white">{market.title}</p>
+            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-white/80">
+              <span>
+                Yes: <span className="font-mono text-emerald-300">{market.yes_probability}</span> ({market.yes_price})
+              </span>
+              <span>
+                No: <span className="font-mono text-rose-300">{market.no_price}</span>
+              </span>
+              <span>Vol: {market.volume}</span>
+              {market.end_date ? <span>Ends: {market.end_date}</span> : null}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -302,6 +782,8 @@ export default function TradingAssistant({
   solPrice,
   solBalance,
   walletAddress,
+  privyWallet,
+  onRequestWalletConnect,
   swapHistory,
   onManualSwapRecorded,
 }: TradingAssistantProps) {
@@ -313,6 +795,11 @@ export default function TradingAssistant({
   const [prompt, setPrompt] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [executingSwapAt, setExecutingSwapAt] = useState<number | null>(null);
+  const [expandedSwapByMessage, setExpandedSwapByMessage] = useState<Record<string, boolean>>({});
+  const [jupiterPluginReady, setJupiterPluginReady] = useState(false);
+  const [renderedPluginSignatureByMessage, setRenderedPluginSignatureByMessage] = useState<
+    Record<string, string>
+  >({});
   const [swarmRun, setSwarmRun] = useState<MultiAgentRun | null>(null);
   /** Finished swarms keyed by user message id (keeps history after a new question). */
   const [completedSwarms, setCompletedSwarms] = useState<Record<string, MultiAgentRun>>({});
@@ -333,6 +820,8 @@ export default function TradingAssistant({
     setPrompt("");
     setIsSubmitting(false);
     setExecutingSwapAt(null);
+    setExpandedSwapByMessage({});
+    setRenderedPluginSignatureByMessage({});
     setSwarmRun(null);
     setCompletedSwarms({});
     setShowInputSuggestions(true);
@@ -340,6 +829,62 @@ export default function TradingAssistant({
   };
 
   const canTrade = Boolean(walletAddress);
+  const privyWalletAdapter = useMemo(() => {
+    if (!walletAddress || !privyWallet) {
+      return null;
+    }
+
+    const maybeWallet = privyWallet as {
+      signTransaction?: (tx: unknown) => Promise<unknown>;
+      signAllTransactions?: (txs: unknown[]) => Promise<unknown[]>;
+      signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
+      sendTransaction?: (...args: unknown[]) => Promise<string>;
+      disconnect?: () => Promise<void>;
+    };
+
+    return {
+      publicKey: new PublicKey(walletAddress),
+      connected: true,
+      connecting: false,
+      disconnecting: false,
+      wallet: {
+        adapter: {
+          name: "Privy Embedded Wallet",
+          icon: "",
+          publicKey: new PublicKey(walletAddress),
+          connected: true,
+          connect: async () => undefined,
+          disconnect: async () => {
+            await maybeWallet.disconnect?.();
+          },
+          sendTransaction: async (...args: unknown[]) => {
+            if (maybeWallet.sendTransaction) {
+              return maybeWallet.sendTransaction(...args);
+            }
+            throw new Error("Privy wallet sendTransaction is not available in this context.");
+          },
+          signTransaction: async (tx: unknown) => {
+            if (maybeWallet.signTransaction) {
+              return maybeWallet.signTransaction(tx);
+            }
+            throw new Error("Privy wallet signTransaction is not available in this context.");
+          },
+          signAllTransactions: async (txs: unknown[]) => {
+            if (maybeWallet.signAllTransactions) {
+              return maybeWallet.signAllTransactions(txs);
+            }
+            throw new Error("Privy wallet signAllTransactions is not available in this context.");
+          },
+          signMessage: async (message: Uint8Array) => {
+            if (maybeWallet.signMessage) {
+              return maybeWallet.signMessage(message);
+            }
+            throw new Error("Privy wallet signMessage is not available in this context.");
+          },
+        },
+      },
+    };
+  }, [privyWallet, walletAddress]);
   const showLanding = messages.length === 0;
   const visibleLandingCards = useMemo(() => {
     const pageSize = 4;
@@ -417,6 +962,9 @@ export default function TradingAssistant({
         reply?: string;
         suggestions?: string[];
         strategyNotes?: string[];
+        derivatives?: DerivativesSnapshot | null;
+        prediction?: PredictionSnapshot | null;
+        predictionMarkets?: { type: "single" | "list"; data: PredictionMarketSnapshot[] } | null;
         action?: SwapAction;
         error?: string;
       };
@@ -445,46 +993,24 @@ export default function TradingAssistant({
           replyReady: true,
         },
       }));
+      const assistantMessageId = newMessageId();
       setMessages((prev) => [
         ...prev,
         {
-          id: newMessageId(),
+          id: assistantMessageId,
           role: "assistant",
           content: formatAssistantText(payload.reply ?? "I could not generate a reply right now."),
           timestamp: assistantTimestamp,
           suggestions: payload.suggestions ?? [],
           strategyNotes: payload.strategyNotes ?? [],
+          derivatives: payload.derivatives,
+          prediction: payload.prediction ?? null,
+          predictionMarkets: payload.predictionMarkets ?? null,
           action: payload.action,
         },
       ]);
-      if (payload.action) {
-        const action = payload.action;
-        const simulatedSignature = `SIM-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
-        const executedAt = new Date().toISOString();
-        onManualSwapRecorded({
-          fromSymbol: action.fromSymbol,
-          toSymbol: action.toSymbol,
-          amount: action.amount,
-          status: "confirmed",
-        });
-        if (!stale()) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: newMessageId(),
-              role: "assistant",
-              content: "Execution completed.",
-              timestamp: Date.now(),
-              executionReport: {
-                route: `${action.fromSymbol}/${action.toSymbol}`,
-                size: `${action.amount} ${action.fromSymbol}`,
-                estimatedOutput: `${action.expectedOut} ${action.toSymbol}`,
-                simulatedTxId: simulatedSignature,
-                executedAt,
-              },
-            },
-          ]);
-        }
+      if (payload.action?.kind === "swap") {
+        setExpandedSwapByMessage((prev) => ({ ...prev, [assistantMessageId]: true }));
       }
     } catch (error) {
       clearProgressTimer();
@@ -527,7 +1053,36 @@ export default function TradingAssistant({
 
   const formatAssistantText = (text: string) => text.trim();
 
-  const runSwap = async (action: SwapAction, messageTimestamp: number) => {
+  const getPluginContainerId = (messageId: string) => `jupiter-plugin-${messageId}`;
+
+  const initJupiterPlugin = (messageId: string, action: SwapAction) => {
+    if (!window.Jupiter?.init) {
+      return;
+    }
+    const containerId = getPluginContainerId(messageId);
+    const container = document.getElementById(containerId);
+    if (!container) {
+      return;
+    }
+    container.innerHTML = "";
+    window.Jupiter.init({
+      displayMode: "integrated",
+      integratedTargetId: containerId,
+      enableWalletPassthrough: true,
+      passthroughWalletContextState: privyWalletAdapter ?? undefined,
+      onRequestConnectWallet: () => {
+        onRequestWalletConnect?.();
+      },
+      formProps: {
+        initialInputMint: action.fromMint,
+        initialOutputMint: action.toMint,
+        initialAmount: action.amount,
+        swapMode: "ExactIn",
+      },
+    });
+  };
+
+  const runSwap = (action: SwapAction, messageTimestamp: number, messageId: string) => {
     if (!canTrade) {
       setMessages((prev) => [
         ...prev,
@@ -542,28 +1097,73 @@ export default function TradingAssistant({
     }
 
     setExecutingSwapAt(messageTimestamp);
-    const simulatedSignature = `SIM-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
-    onManualSwapRecorded({
-      fromSymbol: action.fromSymbol,
-      toSymbol: action.toSymbol,
-      amount: action.amount,
-      status: "confirmed",
-    });
-    const result: { signature?: string; error?: string } = { signature: simulatedSignature };
+    setExpandedSwapByMessage((prev) => ({ ...prev, [messageId]: true }));
     setExecutingSwapAt(null);
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: newMessageId(),
-        role: "assistant",
-        content: result.signature
-          ? `Swap submitted successfully. Signature: ${result.signature}`
-          : `Swap failed: ${result.error ?? "Unknown error"}`,
-        timestamp: Date.now(),
-      },
-    ]);
   };
+
+  useEffect(() => {
+    const existing = document.querySelector<HTMLScriptElement>(
+      'script[src="https://plugin.jup.ag/plugin-v1.js"]',
+    );
+    if (existing?.dataset.loaded === "true") {
+      setJupiterPluginReady(true);
+      return;
+    }
+    if (existing) {
+      const handleLoad = () => setJupiterPluginReady(true);
+      existing.addEventListener("load", handleLoad);
+      return () => existing.removeEventListener("load", handleLoad);
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://plugin.jup.ag/plugin-v1.js";
+    script.defer = true;
+    script.dataset.preload = "true";
+    script.addEventListener("load", () => {
+      script.dataset.loaded = "true";
+      setJupiterPluginReady(true);
+    });
+    document.head.appendChild(script);
+  }, []);
+
+  useEffect(() => {
+    if (!jupiterPluginReady) {
+      return;
+    }
+    messages.forEach((message) => {
+      if (message.role !== "assistant" || message.action?.kind !== "swap") {
+        return;
+      }
+      if (!expandedSwapByMessage[message.id]) {
+        return;
+      }
+      const action = message.action as SwapAction;
+      const signature = `${action.fromMint}:${action.toMint}:${action.amount}`;
+      if (renderedPluginSignatureByMessage[message.id] === signature) {
+        return;
+      }
+      window.requestAnimationFrame(() => {
+        initJupiterPlugin(message.id, action);
+        setRenderedPluginSignatureByMessage((prev) => ({ ...prev, [message.id]: signature }));
+      });
+    });
+  }, [
+    expandedSwapByMessage,
+    jupiterPluginReady,
+    messages,
+    onRequestWalletConnect,
+    privyWalletAdapter,
+    renderedPluginSignatureByMessage,
+  ]);
+
+  useEffect(() => {
+    if (!jupiterPluginReady || !window.Jupiter?.syncProps) {
+      return;
+    }
+    window.Jupiter.syncProps({
+      passthroughWalletContextState: privyWalletAdapter ?? undefined,
+    });
+  }, [jupiterPluginReady, privyWalletAdapter]);
 
   useEffect(() => {
     if (!showLanding) {
@@ -757,12 +1357,13 @@ export default function TradingAssistant({
                     ? swarmRun
                     : completedSwarms[message.id]
                   : undefined;
+              const isSwapExpanded = Boolean(expandedSwapByMessage[message.id]);
               const body = isUser ? (
                 <p className="break-words whitespace-pre-wrap text-[12px] leading-snug text-white/95">
                   {message.content}
                 </p>
               ) : (
-                <AssistantMarkdown content={message.content} />
+                <StructuredAnalysisCard content={message.content} />
               );
 
               return (
@@ -792,24 +1393,92 @@ export default function TradingAssistant({
                         })}
                       </span>
                     </div>
-                    {body}
+                    {!isUser && message.action?.kind === "swap" ? (
+                      <div className="mb-2 rounded-lg border border-emerald-400/30 bg-linear-to-br from-emerald-500/12 to-teal-500/8 p-2">
+                        <p className="text-xs font-semibold text-emerald-100">
+                          Swap {message.action.amount} {message.action.fromSymbol} → {message.action.toSymbol}
+                        </p>
+                        <p className="mt-1 text-[11px] text-emerald-100/75">
+                          Expected: ~{message.action.expectedOut} {message.action.toSymbol}
+                        </p>
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              runSwap(message.action as SwapAction, message.timestamp, message.id);
+                            }}
+                            disabled={!canTrade || executingSwapAt === message.timestamp}
+                            className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-50 transition hover:bg-emerald-500/25 disabled:opacity-50"
+                          >
+                            {executingSwapAt === message.timestamp ? "Opening…" : "Open swap in chat"}
+                          </button>
+                          {isSwapExpanded ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setExpandedSwapByMessage((prev) => ({ ...prev, [message.id]: false }));
+                              }}
+                              className="rounded-lg border border-white/15 bg-white/[0.06] px-2.5 py-1.5 text-[11px] font-semibold text-white/85 transition hover:bg-white/[0.12]"
+                            >
+                              Hide
+                            </button>
+                          ) : null}
+                        </div>
 
-                    {message.executionReport ? (
-                      <div className="mt-2 rounded-lg border border-emerald-400/25 bg-emerald-500/[0.07] p-2">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-200/90">
-                          Simulated execution
-                        </p>
-                        <p className="mt-1.5 font-mono text-[11px] text-emerald-100/90">
-                          {message.executionReport.route} · {message.executionReport.size}
-                        </p>
-                        <p className="mt-1 text-[11px] text-white/70">
-                          Out ≈ {message.executionReport.estimatedOutput}
-                        </p>
-                        <p className="mt-1 font-mono text-[10px] text-white/45">
-                          {message.executionReport.simulatedTxId}
-                        </p>
+                        {isSwapExpanded ? (
+                          <div className="mt-2 overflow-hidden rounded-lg border border-white/10 bg-black/30">
+                            <div
+                              id={getPluginContainerId(message.id)}
+                              className="h-[420px] w-full bg-black"
+                            />
+                            <div className="flex items-center justify-between border-t border-white/10 px-2 py-1.5">
+                              <p className="text-[10px] text-white/45">
+                                Complete the swap above, then confirm to update local history.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const action = message.action as SwapAction;
+                                  onManualSwapRecorded({
+                                    fromSymbol: action.fromSymbol,
+                                    toSymbol: action.toSymbol,
+                                    amount: action.amount,
+                                    status: "confirmed",
+                                  });
+                                  setMessages((prev) => [
+                                    ...prev,
+                                    {
+                                      id: newMessageId(),
+                                      role: "assistant",
+                                      content: `Swap marked completed: ${action.amount} ${action.fromSymbol} → ${action.toSymbol}.`,
+                                      timestamp: Date.now(),
+                                    },
+                                  ]);
+                                  setExpandedSwapByMessage((prev) => ({ ...prev, [message.id]: false }));
+                                }}
+                                className="rounded-md border border-emerald-400/35 bg-emerald-500/15 px-2 py-1 text-[10px] font-semibold text-emerald-100 hover:bg-emerald-500/25"
+                              >
+                                I completed swap
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
+
+                    {!isUser && message.derivatives ? (
+                      <DerivativesPanel data={message.derivatives} />
+                    ) : null}
+
+                    {!isUser && message.prediction?.success ? (
+                      <PredictionPanel data={message.prediction} />
+                    ) : null}
+
+                    {!isUser && message.predictionMarkets ? (
+                      <PredictionMarketsPanel snapshot={message.predictionMarkets} />
+                    ) : null}
+
+                    {body}
 
                     {message.strategyNotes && message.strategyNotes.length > 0 ? (
                       <div className="mt-2 rounded-lg border border-white/10 bg-black/25 p-2">
@@ -844,26 +1513,6 @@ export default function TradingAssistant({
                       </div>
                     ) : null}
 
-                    {message.action?.kind === "swap" ? (
-                      <div className="mt-2 rounded-lg border border-emerald-400/30 bg-linear-to-br from-emerald-500/12 to-teal-500/8 p-2">
-                        <p className="text-xs font-semibold text-emerald-100">
-                          Swap {message.action.amount} {message.action.fromSymbol} → {message.action.toSymbol}
-                        </p>
-                        <p className="mt-1 text-[11px] text-emerald-100/75">
-                          Expected: ~{message.action.expectedOut} {message.action.toSymbol}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void runSwap(message.action as SwapAction, message.timestamp);
-                          }}
-                          disabled={!canTrade || executingSwapAt === message.timestamp}
-                          className="mt-2 w-full rounded-lg border border-emerald-400/40 bg-emerald-500/15 py-1.5 text-[11px] font-semibold text-emerald-50 transition hover:bg-emerald-500/25 disabled:opacity-50"
-                        >
-                          {executingSwapAt === message.timestamp ? "Executing…" : "Execute swap"}
-                        </button>
-                      </div>
-                    ) : null}
                   </div>
                 </div>
                 {swarmForUser ? (
@@ -923,6 +1572,7 @@ export default function TradingAssistant({
           </div>
         </div>
       )}
+
     </div>
   );
 }

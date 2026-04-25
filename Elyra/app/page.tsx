@@ -577,6 +577,12 @@ export default function Home() {
             solPrice={solPrice}
             solBalance={balances[0]?.amount ?? 0}
             walletAddress={activeAddress}
+            privyWallet={activeWallet}
+            onRequestWalletConnect={() => {
+              if (!isAuthenticated) {
+                void login();
+              }
+            }}
             swapHistory={swapHistory}
             onManualSwapRecorded={(entry) => {
               setSwapHistory((previous) => [

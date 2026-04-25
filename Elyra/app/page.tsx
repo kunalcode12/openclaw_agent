@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AuthState, ClientState, useTurnkey } from "@turnkey/react-wallet-kit";
+import { usePrivy } from "@privy-io/react-auth";
+import {
+  useCreateWallet,
+  useSignAndSendTransaction,
+  useWallets,
+} from "@privy-io/react-auth/solana";
 import TradingTerminal, { type TokenInfo } from "../components/TradingTerminal";
 import { tradingDummyToken } from "@/lib/tradeDummyData";
 import {
@@ -18,7 +23,6 @@ import {
   createTransferInstruction,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
-import { Buffer } from "buffer";
 import TradingAssistant, {
   type SwapHistoryItem,
 } from "@/components/TradingAssistant";
@@ -30,13 +34,13 @@ type TokenBalance = {
   amount: number;
 };
 
-const SOLANA_MAINNET_CAIP2 = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
 const DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com";
+const SOLANA_MAINNET_CHAIN = "solana:mainnet" as const;
 const RPC_FALLBACK_URLS = [
   "https://api.mainnet-beta.solana.com",
   "https://rpc.ankr.com/solana",
 ];
-const BLOCKED_TURNKEY_ADDRESSES = new Set([
+const BLOCKED_SOLANA_ADDRESSES = new Set([
   "JCsFjtj6tem9Dv83Ks4HxsL7p8GhdLtokveqW7uWjGyi",
 ]);
 
@@ -52,16 +56,10 @@ const TOKEN_METADATA = {
 } as const;
 
 export default function Home() {
-  const {
-    handleLogin,
-    logout,
-    authState,
-    clientState,
-    user,
-    wallets,
-    createWallet,
-    handleSendTransaction,
-  } = useTurnkey();
+  const { login, logout, authenticated, ready, user } = usePrivy();
+  const { wallets: solanaWallets } = useWallets();
+  const { createWallet } = useCreateWallet();
+  const { signAndSendTransaction } = useSignAndSendTransaction();
 
   const [walletMenuOpen, setWalletMenuOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -80,7 +78,6 @@ export default function Home() {
   ]);
   const [isFetchingBalances, setIsFetchingBalances] = useState(false);
   const [isSubmittingTx, setIsSubmittingTx] = useState(false);
-  const [isSolSendDisabled, setIsSolSendDisabled] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [hideBalances, setHideBalances] = useState(false);
   const [activeRpcUrl, setActiveRpcUrl] = useState(rpcUrl);
@@ -94,30 +91,44 @@ export default function Home() {
   const [swapHistory, setSwapHistory] = useState<SwapHistoryItem[]>([]);
   const [selectedSolAddress] = useState<string | undefined>(undefined);
 
-  const isReady = clientState === ClientState.Ready;
-  const isAuthenticated = authState === AuthState.Authenticated;
+  const isReady = ready;
+  const isAuthenticated = authenticated;
+  const userDisplayName = useMemo(() => {
+    const privyUser = user as
+      | {
+          email?: { address?: string };
+          google?: { email?: string };
+          phone?: { number?: string };
+          wallet?: { address?: string };
+          id?: string;
+        }
+      | undefined;
+
+    return (
+      privyUser?.email?.address ??
+      privyUser?.google?.email ??
+      privyUser?.phone?.number ??
+      privyUser?.wallet?.address ??
+      privyUser?.id
+    );
+  }, [user]);
 
   const solAddresses = useMemo(() => {
-    const walletList = (wallets ?? []) as Array<{
-      accounts?: Array<{ address?: string; addressFormat?: string }>;
-    }>;
+    const walletList = (solanaWallets ?? []) as Array<{ address?: string }>;
     const discoveredAddresses: string[] = [];
 
     for (const wallet of walletList) {
-      for (const account of wallet.accounts ?? []) {
-        if (
-          account.addressFormat?.includes("SOLANA") &&
-          account.address &&
-          !BLOCKED_TURNKEY_ADDRESSES.has(account.address) &&
-          !discoveredAddresses.includes(account.address)
-        ) {
-          discoveredAddresses.push(account.address);
-        }
+      if (
+        wallet.address &&
+        !BLOCKED_SOLANA_ADDRESSES.has(wallet.address) &&
+        !discoveredAddresses.includes(wallet.address)
+      ) {
+        discoveredAddresses.push(wallet.address);
       }
     }
 
     return discoveredAddresses;
-  }, [wallets]);
+  }, [solanaWallets]);
 
   const solAddress = useMemo(() => {
     if (solAddresses.length === 0) {
@@ -129,6 +140,11 @@ export default function Home() {
     return solAddresses[0];
   }, [selectedSolAddress, solAddresses]);
   const activeAddress = solAddress;
+  const activeWallet = useMemo(() => {
+    return (solanaWallets ?? []).find(
+      (wallet) => wallet.address === activeAddress,
+    );
+  }, [activeAddress, solanaWallets]);
 
   const liveTokenInfo = useMemo<TokenInfo>(
     () => ({
@@ -414,14 +430,6 @@ export default function Home() {
     setIsSubmittingTx(true);
     setStatusMessage("");
 
-    if (isSolSendDisabled) {
-      setIsSubmittingTx(false);
-      setStatusMessage(
-        "Turnkey Solana send is not enabled for this organization. Enable 'sol send transaction' in Turnkey settings.",
-      );
-      return;
-    }
-
     try {
       const owner = new PublicKey(activeAddress);
       const destination = new PublicKey(targetAddress);
@@ -483,23 +491,19 @@ export default function Home() {
       }).compileToV0Message();
 
       const versionedTx = new VersionedTransaction(txMessage);
-      const serializedTx = Buffer.from(versionedTx.serialize()).toString(
-        "base64",
-      );
+      if (!activeWallet) {
+        throw new Error("No Privy Solana wallet is available for signing.");
+      }
 
-      await handleSendTransaction({
-        transaction: {
-          unsignedTransaction: serializedTx,
-          signWith: activeAddress,
-          caip2: SOLANA_MAINNET_CAIP2,
-          recentBlockhash: blockhash,
-        },
+      await signAndSendTransaction({
+        wallet: activeWallet,
+        chain: SOLANA_MAINNET_CHAIN,
+        transaction: versionedTx.serialize(),
       });
 
       setStatusMessage(
         `${activeAction} transaction submitted on Solana mainnet.`,
       );
-      setStatusMessage(`${activeAction} transaction submitted on Solana mainnet.`);
 
       setAmount("");
       setTargetAddress("");
@@ -508,12 +512,11 @@ export default function Home() {
       console.error("Transaction failed:", error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (
-        errorMessage.toLowerCase().includes("sol send transaction feature is not enabled") ||
-        errorMessage.toLowerCase().includes("turnkey error 7")
+        errorMessage.toLowerCase().includes("not enabled") ||
+        errorMessage.toLowerCase().includes("permission")
       ) {
-        setIsSolSendDisabled(true);
         setStatusMessage(
-          "Turnkey Solana send is disabled for this organization. Please enable it in Turnkey before withdraw/transfer.",
+          "Privy Solana send is disabled for this app. Please enable embedded Solana wallet permissions in Privy before withdraw/transfer.",
         );
         return;
       }
@@ -539,7 +542,7 @@ export default function Home() {
         solPrice={solPrice}
         isAuthenticated={isAuthenticated}
         onLogin={() => {
-          void handleLogin();
+          void login();
         }}
         walletMenuOpen={walletMenuOpen}
         onWalletMenuOpenChange={setWalletMenuOpen}
@@ -557,7 +560,7 @@ export default function Home() {
         }}
         profileMenuOpen={profileMenuOpen}
         onProfileMenuOpenChange={setProfileMenuOpen}
-        userName={user?.userName}
+        userName={userDisplayName}
         solAddress={solAddress}
         onLogout={() => {
           void logout();
@@ -609,7 +612,7 @@ export default function Home() {
         targetAddress={targetAddress}
         onTargetAddressChange={setTargetAddress}
         isSubmittingTx={isSubmittingTx}
-        userName={user?.userName}
+        userName={userDisplayName}
         statusMessage={statusMessage}
         onAddressCopied={() => setStatusMessage("Address copied.")}
       />

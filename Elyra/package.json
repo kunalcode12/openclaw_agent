@@ -9,9 +9,13 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@privy-io/react-auth": "^3.22.2",
+    "@solana-program/memo": "^0.11.0",
+    "@solana-program/system": "^0.12.0",
+    "@solana-program/token": "^0.13.0",
+    "@solana/kit": "^6.8.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
-    "@turnkey/react-wallet-kit": "^1.11.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.38.0",

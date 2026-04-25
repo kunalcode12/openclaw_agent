@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import "@turnkey/react-wallet-kit/styles.css";
 import "./globals.css";
 import { Providers } from "./providers";
 
@@ -16,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Elyra",
-  description: "Elyra Solana wallet experience powered by Turnkey",
+  description: "Elyra Solana wallet experience powered by Privy",
 };
 
 export default function RootLayout({

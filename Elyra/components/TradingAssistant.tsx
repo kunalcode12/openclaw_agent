@@ -3,6 +3,8 @@
 import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { AnimatePresence, motion } from "framer-motion";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Bot,
   Search,
@@ -240,6 +242,43 @@ type TradingAssistantProps = {
     error?: string;
   }) => void;
 };
+
+function AssistantMarkdown({ content }: { content: string }) {
+  return (
+    <div className="space-y-2 text-[12px] leading-snug text-white/92">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: ({ children }) => <h3 className="text-[13px] font-semibold text-white">{children}</h3>,
+          h2: ({ children }) => <h3 className="text-[13px] font-semibold text-white">{children}</h3>,
+          h3: ({ children }) => <h4 className="text-[12px] font-semibold text-white">{children}</h4>,
+          p: ({ children }) => <p className="break-words whitespace-pre-wrap text-[12px] leading-snug text-white/92">{children}</p>,
+          ul: ({ children }) => <ul className="space-y-1 pl-4 text-[12px] text-white/90">{children}</ul>,
+          ol: ({ children }) => <ol className="space-y-1 pl-4 text-[12px] text-white/90">{children}</ol>,
+          li: ({ children }) => <li className="list-disc">{children}</li>,
+          table: ({ children }) => (
+            <div className="my-2 overflow-x-auto rounded-lg border border-white/12 bg-black/35">
+              <table className="min-w-full border-collapse text-left text-[11px]">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => <thead className="bg-white/[0.06] text-white/80">{children}</thead>,
+          tbody: ({ children }) => <tbody className="text-white/88">{children}</tbody>,
+          tr: ({ children }) => <tr className="border-t border-white/10 first:border-t-0">{children}</tr>,
+          th: ({ children }) => <th className="px-2.5 py-2 font-semibold whitespace-nowrap">{children}</th>,
+          td: ({ children }) => <td className="px-2.5 py-2 align-top">{children}</td>,
+          code: ({ children }) => (
+            <code className="rounded bg-white/[0.08] px-1 py-0.5 font-mono text-[11px] text-white/95">{children}</code>
+          ),
+          strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+          em: ({ children }) => <em className="italic text-white/90">{children}</em>,
+          hr: () => <hr className="my-2 border-white/12" />,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 const STARTER_PROMPTS = [
   "What is the trend for SOL right now?",
@@ -732,24 +771,13 @@ export default function TradingAssistant({
                     ? swarmRun
                     : completedSwarms[message.id]
                   : undefined;
-              const paragraphs = message.content.split(/\n\n+/).filter((p) => p.trim().length > 0);
-              const body =
-                paragraphs.length <= 1 ? (
-                  <p className="break-words whitespace-pre-wrap text-[12px] leading-snug text-white/95">
-                    {message.content}
-                  </p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {paragraphs.map((block, i) => (
-                      <p
-                        key={`${message.id}-p-${i}`}
-                        className="break-words whitespace-pre-wrap text-[12px] leading-snug text-white/92"
-                      >
-                        {block}
-                      </p>
-                    ))}
-                  </div>
-                );
+              const body = isUser ? (
+                <p className="break-words whitespace-pre-wrap text-[12px] leading-snug text-white/95">
+                  {message.content}
+                </p>
+              ) : (
+                <AssistantMarkdown content={message.content} />
+              );
 
               return (
                 <Fragment key={message.id}>

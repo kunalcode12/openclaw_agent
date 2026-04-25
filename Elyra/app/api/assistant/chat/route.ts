@@ -225,14 +225,33 @@ async function askGemini(prompt: string, solPrice?: number, swapHistory?: Assist
         parts: [
           {
             text:
-              "You are a production Solana trading assistant and action planner. Reply in JSON only with keys: reply (string), suggestions (string[]), strategyNotes (string[]), agentAction (object|null).\n" +
+              "You are the FINAL SYNTHESIS AGENT of a quantitative trading system. Reply in JSON only with keys: reply (string), suggestions (string[]), strategyNotes (string[]), agentAction (object|null).\n" +
               "If the user requests a swap, set agentAction={\"type\":\"swap\",\"amount\":\"<number>\",\"fromSymbol\":\"SOL|USDC|BONK\",\"toSymbol\":\"SOL|USDC|BONK\"}. For unclear amounts, set agentAction=null and ask one clarifying question.\n" +
               "When discussing backtests, prefer recent rolling windows (e.g., last 3/6/12 months) unless the user asks for a specific historical date range.\n" +
-              "Write in institutional hedge-fund memo style.\n" +
-              "Structure reply using these labels on separate lines: 'Market Regime:', 'Model View:', 'Execution Plan:', 'Risk Controls:', 'Next Actions:'.\n" +
-              "Write a technical reply (8-14 sentences) with concrete assumptions, constraints, and implementation detail.\n" +
-              "In strategyNotes, provide 3-5 technical bullets (entry logic, stop, invalidation, sizing, execution).\n" +
-              "Keep language crisp and premium; avoid repetitive filler like 'Acknowledged'.\n" +
+              "Your goal is to produce a structured, UI-friendly, but information-rich trading decision.\n" +
+              "Your job is to combine all upstream insights into one clean professional output. Do NOT mention agents. Do NOT show intermediate reasoning. Do NOT repeat raw data unless necessary.\n" +
+              "Assume the user is deploying real capital. Be precise and accountable.\n" +
+              "Style: professional and slightly analytical; concise but information-dense; no fluff, no storytelling, no emotional language, no generic advice.\n" +
+              "Always quantify when possible (probabilities, levels, ranges, risk/reward, invalidation, sizing).\n" +
+              "If user input is short or vague, internally reinterpret it into a quant task (technical structure, quant signals, entry/exit strategy, risk analysis, final call).\n" +
+              "CRITICAL: Do NOT over-compress the answer. Do NOT reduce explanation below usefulness.\n" +
+              "Balance clarity (easy scanning) with depth (enough insight to trade confidently).\n" +
+              "Use tables for data and short paragraphs for insight. Never remove context completely. Never output only strategy without explanation.\n" +
+              "Keep total output medium length (not tiny, not essay).\n" +
+              "Rule: if a trader cannot execute based on your answer alone, the answer is incomplete.\n" +
+              "Use this exact output format every time, headings in this exact order:\n" +
+              "1. TRADE SNAPSHOT (table): Asset, Price, Bias, Confidence (1-10), Timeframe, Decision\n" +
+              "2. MARKET CONTEXT (table): Structure, Position, Volatility, Market Condition; then add 2-3 lines explaining what is actually happening.\n" +
+              "3. EDGE (3-5 bullet points): explain why this trade exists with structure/liquidity/quant reasoning.\n" +
+              "4. RISK MATRIX (table): Risk factor, Impact.\n" +
+              "5. TRADE PLAN (table): Entry zone, Confirmation trigger, Stop loss, Targets (T1, T2), Risk/Reward, Position size, Invalidation.\n" +
+              "6. SCENARIO SWITCH (table)\n" +
+              "7. FINAL CALL (2-3 lines, decisive, clearly tell the user what to do)\n" +
+              "Formatting rules: clean markdown tables, short insight paragraphs, no repeated information, every section must add decision value.\n" +
+              "Use emojis sparingly (⚠️ ✅ 📊), only when they improve scanability.\n" +
+              "Trading rules: Always give a decision (Buy / Wait / Avoid / Scale). Always include entry + stop + targets. Always define invalidation.\n" +
+              "Quality check before finalizing: ensure a trader can understand WHY the trade exists and can EXECUTE directly; if output feels like a signal alert, expand it; if it feels like an essay, compress it.\n" +
+              "In strategyNotes, provide 3-5 technical bullets (entry trigger, stop logic, invalidation level, sizing rule, execution note).\n" +
               `Context:\n${contextBlock}\n\n` +
               `User prompt: ${prompt}`,
           },
@@ -342,7 +361,7 @@ export async function POST(request: Request) {
       if (text.includes("429")) {
         ai = {
           reply:
-            "Gemini is currently rate-limited. I can still help with swap actions and basic Solana guidance. Please retry in a few seconds.",
+            "1. TRADE SNAPSHOT\n| Asset | Price | Bias | Confidence (1-10) | Timeframe | Decision |\n|---|---:|---|---:|---|---|\n| SOL | Feed limited | Neutral | 2 | Intraday | Wait |\n\n2. MARKET CONTEXT\n| Structure | Position | Volatility | Market Condition |\n|---|---|---|---|\n| Unverified (429) | Flat / defensive | Elevated uncertainty | Data-degraded environment |\n\nThe live signal feed is rate-limited, so structure and momentum reads are not reliably refreshed.\nWithout verified market state, directional setups have weak statistical support.\nCurrent optimal posture is capital protection until data quality normalizes.\n\n3. EDGE\n- No durable long/short edge can be validated while real-time confirmation is unavailable.\n- The highest-confidence edge right now is avoiding low-quality entries.\n- Liquidity and trend conditions cannot be scored with required confidence due to feed degradation.\n\n4. RISK MATRIX\n| Risk factor | Impact |\n|---|---|\n| Stale-signal entry ⚠️ | High |\n| False breakout participation | High |\n| Execution slippage under uncertainty | Medium |\n\n5. TRADE PLAN\n| Entry zone | Confirmation trigger | Stop loss | Targets (T1, T2) | Risk/Reward | Position size | Invalidation |\n|---|---|---|---|---|---|---|\n| Wait for feed recovery | Fresh structure + momentum alignment | N/A | N/A | N/A | 0-0.25% (maintenance only) | Any directional trade before validated refresh |\n\n6. SCENARIO SWITCH\n| Scenario | Trigger | Action |\n|---|---|---|\n| ✅ Feed restored | Normalized data + aligned signals | Recompute setup and execute only if R:R >= 2.0 |\n| ⚠️ Feed remains degraded | Continued 429 / stale metrics | Stay in wait mode; no directional deployment |\n\n7. FINAL CALL\nWAIT.\nDo not open directional risk until the feed recovers and a full setup is revalidated.\nIf execution is required, keep size minimal and defensive only.",
           suggestions: [
             "Swap 0.1 SOL to USDC",
             "Show me a low-risk Solana strategy",

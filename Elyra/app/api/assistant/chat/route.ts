@@ -40,6 +40,31 @@ type AssistantRequest = {
   }>;
 };
 
+function normalizeTextList(input: unknown, max = 4): string[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const normalized = input
+    .map((entry) => {
+      if (typeof entry === "string") {
+        return entry.trim();
+      }
+      if (entry && typeof entry === "object") {
+        const maybe = entry as { bullet?: unknown; detail?: unknown; text?: unknown };
+        const bullet = typeof maybe.bullet === "string" ? maybe.bullet.trim() : "";
+        const detail = typeof maybe.detail === "string" ? maybe.detail.trim() : "";
+        const text = typeof maybe.text === "string" ? maybe.text.trim() : "";
+        const joined = [bullet, detail, text].filter(Boolean).join(": ").trim();
+        return joined;
+      }
+      return "";
+    })
+    .filter((item) => item.length > 0);
+
+  return normalized.slice(0, max);
+}
+
 function parseSwapIntent(prompt: string, solBalance?: number) {
   const normalizedPrompt = prompt
     .trim()
@@ -272,8 +297,8 @@ async function askGemini(prompt: string, solPrice?: number, swapHistory?: Assist
   try {
     const parsed = JSON.parse(trimmed) as {
       reply?: string;
-      suggestions?: string[];
-      strategyNotes?: string[];
+      suggestions?: unknown[];
+      strategyNotes?: unknown[];
       agentAction?: {
         type?: string;
         amount?: string | number;
@@ -283,8 +308,8 @@ async function askGemini(prompt: string, solPrice?: number, swapHistory?: Assist
     };
     return {
       reply: parsed.reply ?? "No response generated.",
-      suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions.slice(0, 4) : [],
-      strategyNotes: Array.isArray(parsed.strategyNotes) ? parsed.strategyNotes.slice(0, 4) : [],
+      suggestions: normalizeTextList(parsed.suggestions, 4),
+      strategyNotes: normalizeTextList(parsed.strategyNotes, 4),
       agentAction: parsed.agentAction ?? null,
     };
   } catch {

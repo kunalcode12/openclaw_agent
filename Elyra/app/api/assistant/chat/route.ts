@@ -10,7 +10,10 @@ import {
 
 const PRIMARY_GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-pro";
 const GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
-const DEXSCREENER_BASE = "https://api.dexscreener.com";
+const DEXSCREENER_BASE =
+  process.env.DEXSCREENER_BASE_URL ?? "https://api.dexscreener.com";
+const DRIFT_DATA_BASE =
+  process.env.DRIFT_DATA_API_BASE_URL ?? "https://data.api.drift.trade";
 const PUBLIC_SOLANA_RPC_URLS = [
   "https://solana-rpc.publicnode.com",
   "https://go.getblock.us/86aac42ad4484f3c813079afc201451c",
@@ -518,7 +521,7 @@ async function fetchDriftDerivativesData(symbol: string) {
 
   const marketStat = await (async () => {
     try {
-      const response = await fetch("https://data.api.drift.trade/stats/markets", {
+      const response = await fetch(`${DRIFT_DATA_BASE}/stats/markets`, {
         cache: "no-store",
         signal: AbortSignal.timeout(8_000),
         headers: { "user-agent": "Mozilla/5.0" },
@@ -537,7 +540,7 @@ async function fetchDriftDerivativesData(symbol: string) {
 
   const fundingRecords = await (async () => {
     try {
-      const response = await fetch(`https://data.api.drift.trade/market/${symbol}/fundingRates?limit=24`, {
+      const response = await fetch(`${DRIFT_DATA_BASE}/market/${symbol}/fundingRates?limit=24`, {
         cache: "no-store",
         signal: AbortSignal.timeout(8_000),
         headers: { "user-agent": "Mozilla/5.0" },
@@ -558,7 +561,7 @@ async function fetchDriftDerivativesData(symbol: string) {
     try {
       const endTs = Math.floor(Date.now() / 1000);
       const startTs = endTs - 60 * 60 * 24 * 220; // ~220 days for 200d proxy MA
-      const url = new URL(`https://data.api.drift.trade/market/${symbol}/candles/60`);
+      const url = new URL(`${DRIFT_DATA_BASE}/market/${symbol}/candles/60`);
       url.searchParams.set("startTs", String(startTs));
       url.searchParams.set("endTs", String(endTs));
       url.searchParams.set("limit", "1000");

@@ -23,6 +23,8 @@ type DexPairLite = {
 
 const cache = new Map<string, { data: AiPredictionResult; timestamp: number }>();
 const CACHE_TTL = 30 * 1000;
+const DEXSCREENER_BASE =
+  process.env.DEXSCREENER_BASE_URL ?? "https://api.dexscreener.com";
 
 async function resolvePair(tokenIdentifier: string): Promise<DexPairLite | null> {
   const isAddress = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(tokenIdentifier);
@@ -30,7 +32,7 @@ async function resolvePair(tokenIdentifier: string): Promise<DexPairLite | null>
 
   if (isAddress) {
     const response = await fetch(
-      `https://api.dexscreener.com/token-pairs/v1/solana/${tokenIdentifier}`,
+      `${DEXSCREENER_BASE}/token-pairs/v1/solana/${tokenIdentifier}`,
       { cache: "no-store", headers, signal: AbortSignal.timeout(8_000) },
     );
     if (!response.ok) return null;
@@ -39,7 +41,7 @@ async function resolvePair(tokenIdentifier: string): Promise<DexPairLite | null>
     return json.pairs?.[0] ?? null;
   }
 
-  const searchUrl = `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(tokenIdentifier)}&limit=30`;
+  const searchUrl = `${DEXSCREENER_BASE}/latest/dex/search?q=${encodeURIComponent(tokenIdentifier)}&limit=30`;
   const response = await fetch(searchUrl, {
     cache: "no-store",
     headers,

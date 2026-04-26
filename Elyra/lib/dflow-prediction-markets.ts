@@ -18,7 +18,9 @@ export interface DFlowMarket {
 
 const CACHE_TTL = 60 * 1000;
 const cache = new Map<string, { data: unknown; timestamp: number }>();
-const METADATA_BASE = "https://dev-prediction-markets-api.dflow.net";
+const METADATA_BASE =
+  process.env.DFLOW_PREDICTION_MARKETS_BASE_URL ??
+  "https://dev-prediction-markets-api.dflow.net";
 
 async function fetchWithCache(url: string, cacheKey: string) {
   const now = Date.now();

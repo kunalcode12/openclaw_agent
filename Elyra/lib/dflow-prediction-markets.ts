@@ -73,6 +73,10 @@ function normalizeMarket(m: Record<string, unknown>, fallbackTicker = ""): DFlow
   };
 }
 
+function normalizeTickerKey(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
 export async function getActivePredictionMarkets(limit: number = 10): Promise<DFlowMarket[]> {
   const safeLimit = Math.max(1, Math.min(25, Math.floor(limit || 10)));
   const cacheKey = `markets_list_${safeLimit}`;
@@ -127,6 +131,40 @@ export async function getMarketByTicker(ticker: string): Promise<DFlowMarket> {
     const market = "market" in data && data.market ? data.market : (data as Record<string, unknown>);
     return normalizeMarket(market, normalizedTicker);
   } catch (error) {
+    try {
+      // Fallback 1: Search endpoint across broad market set.
+      const searchData = (await fetchWithCache(
+        `${METADATA_BASE}/api/v1/markets?search=${encodeURIComponent(normalizedTicker)}&limit=50`,
+        `market_search_${normalizedTicker}`,
+      )) as { markets?: Record<string, unknown>[] };
+      const searchMarkets = (searchData.markets ?? []).map((m) => normalizeMarket(m));
+      const key = normalizeTickerKey(normalizedTicker);
+      const exactSearch = searchMarkets.find((m) => normalizeTickerKey(m.ticker) === key);
+      if (exactSearch) return exactSearch;
+      if (searchMarkets.length > 0) {
+        const closest = searchMarkets[0];
+        return {
+          ...closest,
+          description:
+            `${closest.description ? `${closest.description} ` : ""}(Closest available market match for requested ticker ${normalizedTicker})`.trim(),
+        };
+      }
+
+      // Fallback 2: Active market fuzzy lookup.
+      const active = await getActivePredictionMarkets(50);
+      const candidates = active.filter((m) => m.success);
+      const exact = candidates.find((m) => normalizeTickerKey(m.ticker) === key);
+      if (exact) return exact;
+      const fuzzy = candidates.find((m) => {
+        const t = normalizeTickerKey(m.ticker);
+        return t.includes(key) || key.includes(t) || m.title.toUpperCase().includes(normalizedTicker);
+      });
+      if (fuzzy) return fuzzy;
+    } catch {
+      // ignore fallback failure; return default error below
+    }
+
+    // Better error: include hint that ticker may not exist in current dev dataset.
     return {
       id: "",
       ticker: normalizedTicker,
@@ -136,7 +174,9 @@ export async function getMarketByTicker(ticker: string): Promise<DFlowMarket> {
       yes_probability: "",
       volume: "",
       success: false,
-      error: error instanceof Error ? error.message : "Market not found",
+      error:
+        `${error instanceof Error ? error.message : "Market not found"}. ` +
+        "Ticker may be unavailable in current DFlow dev dataset; try 'Show active prediction markets' for valid tickers.",
     };
   }
 }

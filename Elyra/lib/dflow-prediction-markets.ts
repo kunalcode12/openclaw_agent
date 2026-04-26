@@ -128,7 +128,12 @@ export async function getMarketByTicker(ticker: string): Promise<DFlowMarket> {
       cacheKey,
     )) as { market?: Record<string, unknown> } | Record<string, unknown>;
 
-    const market = "market" in data && data.market ? data.market : (data as Record<string, unknown>);
+    const marketCandidate =
+      "market" in data && data.market ? data.market : (data as Record<string, unknown>);
+    const market: Record<string, unknown> =
+      marketCandidate && typeof marketCandidate === "object"
+        ? (marketCandidate as Record<string, unknown>)
+        : {};
     return normalizeMarket(market, normalizedTicker);
   } catch (error) {
     try {

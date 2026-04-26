@@ -393,10 +393,7 @@ export default function Home() {
 
     setStatusMessage("Creating Solana wallet…");
     try {
-      await createWallet({
-        walletName: "Elyra Solana Wallet",
-        accounts: ["ADDRESS_FORMAT_SOLANA"],
-      });
+      await createWallet();
       setStatusMessage("Solana wallet created. You can deposit when the address appears.");
     } catch (error) {
       const message =

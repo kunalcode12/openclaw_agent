@@ -324,6 +324,10 @@ type TradingAssistantProps = {
   solBalance: number;
   walletAddress?: string;
   privyWallet?: unknown;
+  creditsRemaining: number;
+  creditsResetAt: number | null;
+  isCreditsExhausted: boolean;
+  consumeCredit: () => boolean;
   onRequestWalletConnect?: () => void;
   swapHistory: SwapHistoryItem[];
   onManualSwapRecorded: (entry: {
@@ -1030,6 +1034,10 @@ export default function TradingAssistant({
   solBalance,
   walletAddress,
   privyWallet,
+  creditsRemaining,
+  creditsResetAt,
+  isCreditsExhausted,
+  consumeCredit,
   onRequestWalletConnect,
   swapHistory,
   onManualSwapRecorded,
@@ -1174,6 +1182,24 @@ export default function TradingAssistant({
   const submitPrompt = async (nextPrompt?: string) => {
     const text = (nextPrompt ?? prompt).trim();
     if (!text || isSubmitting) {
+      return;
+    }
+    if (!consumeCredit()) {
+      const resetLabel = creditsResetAt
+        ? new Date(creditsResetAt).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "in 24 hours";
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: newMessageId(),
+          role: "assistant",
+          content: `Daily credits are exhausted (0 remaining). Credits reset at ${resetLabel}.`,
+          timestamp: Date.now(),
+        },
+      ]);
       return;
     }
     setIsExpanded(true);
@@ -1582,10 +1608,12 @@ export default function TradingAssistant({
                       return (
                         <button
                           key={card.title}
+                          type="button"
+                          disabled={isCreditsExhausted}
                           onClick={() => {
                             void submitPrompt(card.title);
                           }}
-                          className="w-full border border-indigo-400/25 bg-black px-2.5 py-1.5 hover:border-indigo-400/45"
+                          className="w-full border border-indigo-400/25 bg-black px-2.5 py-1.5 hover:border-indigo-400/45 disabled:cursor-not-allowed disabled:opacity-45"
                         >
                           <div className="flex items-start gap-2.5">
                             <Icon
@@ -1639,6 +1667,7 @@ export default function TradingAssistant({
               <input
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
+                disabled={isCreditsExhausted}
                 placeholder="Ask about trades or / for shortcuts"
                 className="w-full bg-transparent px-2 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none"
               />
@@ -1646,7 +1675,7 @@ export default function TradingAssistant({
                 <span className="text-white/40">⌄</span>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isCreditsExhausted}
                   className="border border-indigo-400/50 bg-indigo-500/20 px-2 py-1 text-xs text-white disabled:opacity-60"
                 >
                   ↑
@@ -1654,6 +1683,11 @@ export default function TradingAssistant({
               </div>
             </div>
           </form>
+          {isCreditsExhausted ? (
+            <p className="mt-2 px-1 text-[10px] text-rose-300/80">
+              Credits exhausted. Assistant access resets in 24 hours.
+            </p>
+          ) : null}
           <p className="mt-2 px-1 text-[10px] text-white/35">
             Elyra gives guidance, not certainty. Review key information.
           </p>
@@ -1855,10 +1889,11 @@ export default function TradingAssistant({
                             <button
                               key={item}
                               type="button"
+                              disabled={isCreditsExhausted}
                               onClick={() => {
                                 void submitPrompt(item);
                               }}
-                              className="rounded-full border border-white/12 bg-white/[0.06] px-3 py-1.5 text-[11px] font-medium text-white/85 transition-colors hover:border-indigo-400/40 hover:bg-indigo-500/15"
+                              className="rounded-full border border-white/12 bg-white/[0.06] px-3 py-1.5 text-[11px] font-medium text-white/85 transition-colors hover:border-indigo-400/40 hover:bg-indigo-500/15 disabled:cursor-not-allowed disabled:opacity-45"
                             >
                               {item}
                             </button>
@@ -1894,10 +1929,12 @@ export default function TradingAssistant({
                   {STARTER_PROMPTS.map((item) => (
                     <button
                       key={item}
+                      type="button"
+                      disabled={isCreditsExhausted}
                       onClick={() => {
                         void submitPrompt(item);
                       }}
-                      className="border border-white/10 bg-black px-2 py-1 text-[11px] font-semibold text-white/85 hover:bg-white/5"
+                      className="border border-white/10 bg-black px-2 py-1 text-[11px] font-semibold text-white/85 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-45"
                     >
                       {item}
                     </button>
@@ -1910,17 +1947,24 @@ export default function TradingAssistant({
               <input
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
+                disabled={isCreditsExhausted}
                 placeholder="Ask Solana questions or type: Swap 0.1 SOL to USDC"
                 className="min-h-[44px] flex-1 rounded-xl border border-white/12 bg-white/[0.04] px-4 py-2.5 text-[13px] font-medium text-white placeholder:text-white/40 focus:border-indigo-400/35 focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
               />
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || isCreditsExhausted}
                 className="shrink-0 rounded-xl border border-indigo-400/50 bg-linear-to-br from-indigo-500/30 to-violet-600/25 px-5 py-2.5 text-[12px] font-bold text-white shadow-lg shadow-indigo-500/15 disabled:opacity-50"
               >
                 {isSubmitting ? "…" : "Send"}
               </button>
             </form>
+            <div className="flex items-center justify-between px-1 text-[10px] text-white/40">
+              <span>Credits left today: {creditsRemaining}</span>
+              {isCreditsExhausted ? (
+                <span className="text-rose-300/85">Resets in 24 hours</span>
+              ) : null}
+            </div>
           </div>
         </div>
       )}

@@ -34,8 +34,15 @@ type TokenBalance = {
   amount: number;
 };
 
+type DailyCreditsState = {
+  remaining: number;
+  resetAt: number;
+};
+
 const DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com";
 const SOLANA_MAINNET_CHAIN = "solana:mainnet" as const;
+const DAILY_PROMPT_CREDITS = 5;
+const CREDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const RPC_FALLBACK_URLS = [
   "https://api.mainnet-beta.solana.com",
   "https://rpc.ankr.com/solana",
@@ -90,6 +97,7 @@ export default function Home() {
   );
   const [swapHistory, setSwapHistory] = useState<SwapHistoryItem[]>([]);
   const [selectedSolAddress] = useState<string | undefined>(undefined);
+  const [creditsState, setCreditsState] = useState<DailyCreditsState | null>(null);
 
   const isReady = ready;
   const isAuthenticated = authenticated;
@@ -112,6 +120,29 @@ export default function Home() {
       privyUser?.id
     );
   }, [user]);
+  const creditUserKey = useMemo(() => {
+    const privyUser = user as
+      | {
+          id?: string;
+          email?: { address?: string };
+          google?: { email?: string };
+          phone?: { number?: string };
+          wallet?: { address?: string };
+        }
+      | undefined;
+    if (!privyUser) return null;
+    return (
+      privyUser.id ??
+      privyUser.email?.address ??
+      privyUser.google?.email ??
+      privyUser.phone?.number ??
+      privyUser.wallet?.address ??
+      null
+    );
+  }, [user]);
+  const creditsRemaining = creditsState?.remaining ?? DAILY_PROMPT_CREDITS;
+  const creditsResetAt = creditsState?.resetAt ?? null;
+  const isCreditsExhausted = isAuthenticated && creditsRemaining <= 0;
 
   const solAddresses = useMemo(() => {
     const walletList = (solanaWallets ?? []) as Array<{ address?: string }>;
@@ -386,6 +417,91 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isAuthenticated || !creditUserKey) {
+      setCreditsState(null);
+      return;
+    }
+    const storageKey = `elyra:daily-credits:${creditUserKey}`;
+    const now = Date.now();
+    let nextState: DailyCreditsState | null = null;
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<DailyCreditsState>;
+        if (
+          typeof parsed.remaining === "number" &&
+          typeof parsed.resetAt === "number"
+        ) {
+          if (parsed.resetAt > now) {
+            nextState = {
+              remaining: Math.max(0, Math.min(DAILY_PROMPT_CREDITS, parsed.remaining)),
+              resetAt: parsed.resetAt,
+            };
+          }
+        }
+      }
+    } catch {
+      /* ignore parse errors and regenerate state */
+    }
+    if (!nextState) {
+      nextState = { remaining: DAILY_PROMPT_CREDITS, resetAt: now + CREDIT_WINDOW_MS };
+      window.localStorage.setItem(storageKey, JSON.stringify(nextState));
+    }
+    setCreditsState(nextState);
+  }, [creditUserKey, isAuthenticated]);
+
+  const consumeAssistantCredit = useCallback(() => {
+    if (!isAuthenticated || !creditUserKey) {
+      return false;
+    }
+    const storageKey = `elyra:daily-credits:${creditUserKey}`;
+    const now = Date.now();
+    let current: DailyCreditsState = {
+      remaining: DAILY_PROMPT_CREDITS,
+      resetAt: now + CREDIT_WINDOW_MS,
+    };
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<DailyCreditsState>;
+        if (
+          typeof parsed.remaining === "number" &&
+          typeof parsed.resetAt === "number"
+        ) {
+          current =
+            parsed.resetAt <= now
+              ? {
+                  remaining: DAILY_PROMPT_CREDITS,
+                  resetAt: now + CREDIT_WINDOW_MS,
+                }
+              : {
+                  remaining: Math.max(
+                    0,
+                    Math.min(DAILY_PROMPT_CREDITS, parsed.remaining),
+                  ),
+                  resetAt: parsed.resetAt,
+                };
+        }
+      }
+    } catch {
+      /* ignore parse errors and use defaults */
+    }
+
+    if (current.remaining <= 0 && current.resetAt > now) {
+      setCreditsState(current);
+      return false;
+    }
+
+    const nextState: DailyCreditsState = {
+      remaining: Math.max(0, current.remaining - 1),
+      resetAt: current.resetAt > now ? current.resetAt : now + CREDIT_WINDOW_MS,
+    };
+    window.localStorage.setItem(storageKey, JSON.stringify(nextState));
+    setCreditsState(nextState);
+    return true;
+  }, [creditUserKey, isAuthenticated]);
+
   const handleCreateSolWallet = async () => {
     if (!isAuthenticated) {
       return;
@@ -407,6 +523,10 @@ export default function Home() {
 
   const handleActionSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (isCreditsExhausted) {
+      setStatusMessage("Daily credits exhausted. Trading resets in 24 hours.");
+      return;
+    }
 
     if (!activeAddress) {
       setStatusMessage("No active Solana wallet address found.");
@@ -538,6 +658,8 @@ export default function Home() {
       <Navbar
         solPrice={solPrice}
         isAuthenticated={isAuthenticated}
+        dailyCredits={creditsRemaining}
+        creditsResetAt={creditsResetAt}
         onLogin={() => {
           void login();
         }}
@@ -552,6 +674,10 @@ export default function Home() {
         isFetchingBalances={isFetchingBalances}
         activeRpcUrl={activeRpcUrl}
         onOpenDeposit={() => {
+          if (isCreditsExhausted) {
+            setStatusMessage("Daily credits exhausted. Trading resets in 24 hours.");
+            return;
+          }
           setActiveAction("deposit");
           setActionModalOpen(true);
         }}
@@ -565,8 +691,16 @@ export default function Home() {
       />
 
       <main className="mx-auto flex w-full max-w-[1800px] flex-1 min-h-0 flex-col gap-0 overflow-hidden xl:grid xl:grid-cols-10 xl:grid-rows-[minmax(0,1fr)] xl:items-stretch">
-        <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-black max-xl:min-h-[min(360px,55dvh)] xl:col-span-7 xl:h-full xl:max-h-full xl:min-h-0 xl:rounded-l-xl xl:rounded-r-none">
+        <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-black max-xl:min-h-[min(360px,55dvh)] xl:col-span-7 xl:h-full xl:max-h-full xl:min-h-0 xl:rounded-l-xl xl:rounded-r-none">
           <TradingTerminal tokenInfo={liveTokenInfo} />
+          {isCreditsExhausted ? (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 px-6 text-center backdrop-blur-sm">
+              <p className="max-w-md text-sm font-medium text-white/85">
+                Daily credits are exhausted. Trading system unlocks again in 24
+                hours.
+              </p>
+            </div>
+          ) : null}
         </section>
 
         <aside className="flex min-h-0 flex-1 flex-col overflow-hidden border border-white/10 bg-black max-xl:min-h-[min(280px,45dvh)] xl:col-span-3 xl:h-full xl:max-h-full xl:min-h-0 xl:border-l-0 xl:rounded-r-xl xl:rounded-l-none">
@@ -575,6 +709,10 @@ export default function Home() {
             solBalance={balances[0]?.amount ?? 0}
             walletAddress={activeAddress}
             privyWallet={activeWallet}
+            creditsRemaining={creditsRemaining}
+            creditsResetAt={creditsResetAt}
+            consumeCredit={consumeAssistantCredit}
+            isCreditsExhausted={isCreditsExhausted}
             onRequestWalletConnect={() => {
               if (!isAuthenticated) {
                 void login();

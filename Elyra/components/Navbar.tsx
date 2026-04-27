@@ -13,6 +13,8 @@ type TokenBalance = {
 type NavbarProps = {
   solPrice: number;
   isAuthenticated: boolean;
+  dailyCredits: number;
+  creditsResetAt: number | null;
   onLogin: () => void;
   walletMenuOpen: boolean;
   onWalletMenuOpenChange: (open: boolean) => void;
@@ -33,6 +35,8 @@ type NavbarProps = {
 export default function Navbar({
   solPrice,
   isAuthenticated,
+  dailyCredits,
+  creditsResetAt,
   onLogin,
   walletMenuOpen,
   onWalletMenuOpenChange,
@@ -62,6 +66,12 @@ export default function Navbar({
       setTimeout(() => setCopied(false), 2000);
     }
   };
+  const resetTimeLabel = creditsResetAt
+    ? new Date(creditsResetAt).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
 
   return (
     <nav
@@ -134,7 +144,30 @@ export default function Navbar({
 
         {/* Right Actions */}
         <div className="flex items-center gap-2.5">
-          {/* Free Credits Badge - Hidden on mobile */}
+          {isAuthenticated ? (
+            <div
+              className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                dailyCredits > 0
+                  ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
+                  : "border-rose-400/35 bg-rose-500/10 text-rose-200"
+              }`}
+              title={
+                dailyCredits > 0
+                  ? "Credits reduce by 1 per assistant prompt."
+                  : `Credits exhausted. Resets at ${resetTimeLabel ?? "next cycle"}.`
+              }
+            >
+              <span>Credits</span>
+              <span className="rounded-md bg-black/25 px-1.5 py-0.5 font-mono text-[11px] text-white">
+                {dailyCredits}
+              </span>
+              {dailyCredits <= 0 ? (
+                <span className="text-[10px] text-rose-200/85">
+                  resets {resetTimeLabel ?? "in 24h"}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
 
           {!isAuthenticated ? (
             <button
